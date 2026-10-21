@@ -351,3 +351,7 @@
 - 预测方向限制在可用离轴角附近，避免近距离横穿时侧向甩飞。
 - ARH 的 0.5s 仍为无推力段，但弹翼在点火前即可按 PN 修正航向；0.5s 后点火。
 - SARH/IR 同样使用预测拦截点初始化，解决不手动拉提前量时 50 b 左右脱靶。
+
+## 待解决问题
+
+- 红外弹无法锁定：需要检查 IR 两段式发射、`IrTargeting.valid`、`seekerLockedEntity`、客户端 `toggleSeeker`/服务端 `MissileFirePacket` 校验是否与服务端 IR 目标状态一致。
