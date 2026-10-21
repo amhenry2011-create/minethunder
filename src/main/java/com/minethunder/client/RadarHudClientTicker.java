@@ -213,6 +213,17 @@ public final class RadarHudClientTicker {
             }
         }
         if (RadarHud.currentMode == RadarMode.TWS) {
+            // AESA 近似：TWS 当前扫描体积内的所有空中回波同时刷新航迹，
+            // 不再只依赖单条扫描线经过目标。
+            for (RadarContact c : contacts) {
+                if (c.targetClass != RadarTargetClass.AIR) continue;
+                RadarEcho echo = RadarHud.echoes.get(c.entity.getUUID());
+                if (echo == null) {
+                    RadarHud.echoes.put(c.entity.getUUID(), new RadarEcho(c, nowTick));
+                } else {
+                    echo.update(c, nowTick);
+                }
+            }
             // 清除切换模式残留的地面/海面回波，避免 TWS 面板继续显示。
             RadarHud.echoes.entrySet().removeIf(e ->
                     e.getValue().targetClass != RadarTargetClass.AIR);
