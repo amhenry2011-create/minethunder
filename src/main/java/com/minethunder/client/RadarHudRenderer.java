@@ -462,8 +462,8 @@ public final class RadarHudRenderer {
         int x = px - bw - 4;
 
         // 上方 4 个：雷达开关、模式、帮助、挂架
-        drawKeyBox(g, x, py, bw, bh, "R " + (RadarHud.radarOn ? "雷达开" : "雷达关"), GREEN);
-        drawKeyBox(g, x, py + bh + 3, bw, bh, "B 模式", GREEN);
+        drawKeyBox(g, x, py, bw, bh, "Alt+R", GREEN);
+        drawKeyBox(g, x, py + bh + 3, bw, bh, "Alt+B", GREEN);
         drawKeyBox(g, x, py + (bh + 3) * 2, bw, bh, "H 帮助", GREEN);
         drawKeyBox(g, x, py + (bh + 3) * 3, bw, bh, keyName(KeyBindings.RACK_SELECT), GREEN);
 
@@ -728,7 +728,7 @@ public final class RadarHudRenderer {
 
     private static void renderHint(GuiGraphics g, int screenW, int screenH) {
         Minecraft mc = Minecraft.getInstance();
-        String hint = "B 模式  R 雷达  Alt+F 锁定  Alt+T 目标  Alt+X 雷达导引头  Alt+E 干扰  H 帮助";
+        String hint = "Alt+B 模式  Alt+R 雷达  Alt+V 回中  方向键扫描  Alt+F 锁定  Alt+T 目标  Alt+X 导引头  Alt+E 干扰";
         g.drawString(mc.font, hint, 8, screenH - 12, 0x8066FF66, false);
     }
 

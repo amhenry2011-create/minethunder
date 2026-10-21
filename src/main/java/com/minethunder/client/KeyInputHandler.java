@@ -43,7 +43,11 @@ public final class KeyInputHandler {
     private static boolean altDWasDown = false;
     private static boolean altWWasDown = false;
     private static boolean altEWasDown = false;
-    private static int arrowCooldown = 0;
+    private static boolean altVWasDown = false;
+    private static double scanVelocityAz = 0.0;
+    private static double scanVelocityEl = 0.0;
+    private static final double SCAN_SLEW_DEG_PER_SEC = 30.0;
+    private static final double SCAN_ACCEL_DEG_PER_SEC2 = 120.0;
 
     /** Alt+E：同时释放箔条与热焰弹。 */
     @SubscribeEvent
@@ -107,8 +111,6 @@ public final class KeyInputHandler {
         if (alt) return;
 
         switch (key) {
-            case GLFW.GLFW_KEY_B -> cycleMode(mc);
-            case GLFW.GLFW_KEY_R -> toggleRadar(mc);
             case GLFW.GLFW_KEY_X -> {
                 if (RadarHud.lockedEntity != null) {
                     RadarHudClientTicker.toggleLock();
@@ -126,14 +128,6 @@ public final class KeyInputHandler {
             case GLFW.GLFW_KEY_H -> {
                 RadarHud.helpOpen = !RadarHud.helpOpen;
             }
-            case GLFW.GLFW_KEY_V -> {
-                if (RadarHud.lockAcquiring) {
-                    notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，扫描位置已冻结"));
-                } else {
-                    RadarHudClientTicker.recenterScan();
-                    notifyClient(mc, Component.literal("扫描中心复位"));
-                }
-            }
             case GLFW.GLFW_KEY_M -> {
                 RadarHud.panelDisplay = (RadarHud.panelDisplay + 1) % 3;
             }
@@ -147,20 +141,48 @@ public final class KeyInputHandler {
         }
     }
 
-    private static void adjustScan(Minecraft mc, double dAz, double dEl) {
-        if (RadarHud.lockAcquiring) {
-            notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，扫描位置已冻结"));
+    private static void updateSmoothScan(Minecraft mc, boolean left, boolean right,
+                                         boolean up, boolean down) {
+        if (mc.screen != null || RadarHud.lockAcquiring
+                || RadarHud.currentMode == RadarMode.ACM
+                || RadarHud.currentMode == RadarMode.TWS
+                || RadarHud.currentMode == RadarMode.STT) {
+            scanVelocityAz = 0.0;
+            scanVelocityEl = 0.0;
             return;
         }
-        if (RadarHud.currentMode == RadarMode.ACM) {
-            notifyClient(mc, Component.literal("ACM 扫描位置固定"));
-            return;
+
+        double targetAz = (right ? 1.0 : 0.0) - (left ? 1.0 : 0.0);
+        double targetEl = (up ? 1.0 : 0.0) - (down ? 1.0 : 0.0);
+        double maxDelta = SCAN_ACCEL_DEG_PER_SEC2 / 20.0;
+        scanVelocityAz = approach(scanVelocityAz,
+                targetAz * SCAN_SLEW_DEG_PER_SEC, maxDelta);
+        scanVelocityEl = approach(scanVelocityEl,
+                targetEl * SCAN_SLEW_DEG_PER_SEC, maxDelta);
+
+        double nextAz = RadarHud.scanAzimuthOffsetDeg + scanVelocityAz / 20.0;
+        double nextEl = RadarHud.scanElevationOffsetDeg + scanVelocityEl / 20.0;
+        if (nextAz <= -30.0 || nextAz >= 30.0) {
+            nextAz = Math.max(-30.0, Math.min(30.0, nextAz));
+            if ((nextAz <= -30.0 && scanVelocityAz < 0.0)
+                    || (nextAz >= 30.0 && scanVelocityAz > 0.0)) {
+                scanVelocityAz = 0.0;
+            }
         }
-        RadarHud.scanAzimuthOffsetDeg = Math.max(-30, Math.min(30, RadarHud.scanAzimuthOffsetDeg + dAz));
-        RadarHud.scanElevationOffsetDeg = Math.max(-60, Math.min(60, RadarHud.scanElevationOffsetDeg + dEl));
-        notifyClient(mc, Component.literal(String.format(
-                "扫描中心：方位 %.0f° / 俯仰 %.0f°",
-                RadarHud.scanAzimuthOffsetDeg, RadarHud.scanElevationOffsetDeg)));
+        if (nextEl <= -60.0 || nextEl >= 60.0) {
+            nextEl = Math.max(-60.0, Math.min(60.0, nextEl));
+            if ((nextEl <= -60.0 && scanVelocityEl < 0.0)
+                    || (nextEl >= 60.0 && scanVelocityEl > 0.0)) {
+                scanVelocityEl = 0.0;
+            }
+        }
+        RadarHud.scanAzimuthOffsetDeg = nextAz;
+        RadarHud.scanElevationOffsetDeg = nextEl;
+    }
+
+    private static double approach(double value, double target, double maxDelta) {
+        if (Math.abs(target - value) <= maxDelta) return target;
+        return value + Math.signum(target - value) * maxDelta;
     }
 
     private static void cycleMode(Minecraft mc) {
@@ -237,7 +259,7 @@ public final class KeyInputHandler {
 
     private static void showHelp(Minecraft mc) {
         notifyClient(mc, Component.literal(
-                "B 模式 · R 雷达 · V 复位 · 方向键扫描 · Alt+F 锁定 · Alt+T 选目标 · X 解锁"));
+                "Alt+B 模式 · Alt+R 雷达 · Alt+V 回中 · 方向键扫描 · Alt+F 锁定 · Alt+T 选目标 · X 解锁"));
         notifyClient(mc, Component.literal(
                 "Alt+Q 距离 · Alt+D 扫描宽 · Alt+W ACM · Alt+X 雷达导引头 · 满弓红外 · Alt+E 干扰弹 · C 弹种 · Enter 挂架"));
     }
@@ -282,6 +304,7 @@ public final class KeyInputHandler {
 
         boolean bDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_B);
         boolean rDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_R);
+        boolean vDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_V);
         boolean qDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_Q);
         boolean dDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_D);
         boolean wDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_W);
@@ -290,6 +313,16 @@ public final class KeyInputHandler {
         if (altDown && mc.screen == null) {
             if (bDown && !altBWasDown) cycleMode(mc);
             if (rDown && !altRWasDown) toggleRadar(mc);
+            if (vDown && !altVWasDown) {
+                if (RadarHud.lockAcquiring) {
+                    notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，扫描位置已冻结"));
+                } else {
+                    RadarHudClientTicker.recenterScan();
+                    scanVelocityAz = 0.0;
+                    scanVelocityEl = 0.0;
+                    notifyClient(mc, Component.literal("天线回中"));
+                }
+            }
             if (qDown && !altQWasDown) {
                 drain(mc.options.keyDrop);
                 cycleRange(mc);
@@ -305,6 +338,7 @@ public final class KeyInputHandler {
         }
         altBWasDown = bDown;
         altRWasDown = rDown;
+        altVWasDown = vDown;
         altQWasDown = qDown;
         altDWasDown = dDown;
         altWWasDown = wDown;
@@ -315,19 +349,7 @@ public final class KeyInputHandler {
         boolean rightArrow = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_RIGHT);
         boolean upArrow = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_UP);
         boolean downArrow = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_DOWN);
-        if (leftArrow || rightArrow || upArrow || downArrow) {
-            if (arrowCooldown <= 0) {
-                if (leftArrow) adjustScan(mc, -1, 0);
-                if (rightArrow) adjustScan(mc, 1, 0);
-                if (upArrow) adjustScan(mc, 0, 1);
-                if (downArrow) adjustScan(mc, 0, -1);
-                arrowCooldown = 5;
-            } else {
-                arrowCooldown--;
-            }
-        } else {
-            arrowCooldown = 0;
-        }
+        updateSmoothScan(mc, leftArrow, rightArrow, upArrow, downArrow);
 
         if (KeyBindings.CYCLE_MISSILE_TYPE.consumeClick()) {
             RadarHud.selectedMissile = nextMissile(RadarHud.selectedMissile);

@@ -33,7 +33,7 @@ public final class RadarHud {
 
     /** 当前雷达模式 */
     public static RadarMode currentMode = RadarMode.SRC_PD;
-    /** 雷达是否开启（R / Alt+R 切换，默认开启） */
+    /** 雷达是否开启（Alt+R 切换，默认开启） */
     public static boolean radarOn = true;
     /** 雷达导引头是否开启（Alt+X 切换） */
     public static boolean seekerEnabled = false;
@@ -99,7 +99,7 @@ public final class RadarHud {
         }
         return isAcmContext() ? acmRange : maxRange;
     }
-    /** 扫描中心偏移：方向键调整，V 复位；俯仰最大 ±60° */
+    /** 扫描中心偏移：方向键平滑调整，Alt+V 复位；俯仰最大 ±60° */
     public static double scanAzimuthOffsetDeg = 0;
     public static double scanElevationOffsetDeg = 0;
     /** 当前面板选中的回波实体 ID（只影响面板） */
