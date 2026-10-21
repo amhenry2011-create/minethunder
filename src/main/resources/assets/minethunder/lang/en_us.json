@@ -1,0 +1,19 @@
+{
+  "itemGroup.minethunder": "MineThunder",
+  "item.minethunder.sarh_missile": "Semi-Active Radar Missile (SARH)",
+  "item.minethunder.arh_missile": "Active Radar Missile (ARH)",
+  "item.minethunder.ir_missile": "Infrared Missile (IR)",
+  "key.categories.minethunder": "MineThunder Modern Air Combat",
+  "key.minethunder.lock_target": "Lock Target",
+  "key.minethunder.radar_mode": "Cycle Radar Mode",
+  "key.minethunder.missile_type": "Cycle Missile Type",
+  "key.minethunder.fire_missile": "Fire Missile",
+  "key.minethunder.radar_toggle": "Toggle Radar",
+  "key.minethunder.rack_select": "Rack Select (Release Mouse)",
+  "key.minethunder.release_mouse": "Release/Grab Mouse",
+  "key.minethunder.rack_select_enter": "Rack Select (Enter)",
+  "key.minethunder.radar_menu": "Radar Function Menu",
+  "item.minethunder.sarh_missile_firework": "SARH Missile Rocket",
+  "item.minethunder.arh_missile_firework": "ARH Missile Rocket",
+  "item.minethunder.ir_missile_firework": "IR Missile Rocket"
+}

@@ -1,0 +1,2228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MineThunder 雷达 UI Demo</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{display:block;background:#000}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const CONFIG = {
+  W: 1920,
+  H: 1080,
+  fovY: 70,
+  panel: { size: 300, right: 30, bottom: 120 },
+  colors: {
+    panelBg: "rgba(0,78,4,0.86)",
+    panelBgTop: "rgba(0,112,16,0.88)",
+    panelBgBottom: "rgba(0,55,4,0.88)",
+    grid: "#2fd12f",
+    green: "#6bff6b",
+    greenDim: "#49b849",
+    white: "#f0fff0",
+    red: "#ff5555",
+    amber: "#ffd060",
+    gray: "#8a9a8a",
+    gold: "#ffe14d"
+  },
+  seeker: {
+    fovDeg: 12,
+    gimbalDeg: 30,
+    hudFovDeg: 3.5,
+    hudGimbalDeg: 34,
+    acquireSeconds: 1.6,
+    highConfidenceSeconds: 1.6,
+    slewPxPerSecond: 900
+  },
+  ranges: [10000, 20000, 37000, 87000],
+  scans: [60, 30, 15],
+  missileMaxRange: 37000
+};
+
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+cv.width = CONFIG.W;
+cv.height = CONFIG.H;
+
+function fit() {
+  const s = Math.min(window.innerWidth / CONFIG.W, window.innerHeight / CONFIG.H);
+  cv.style.width = Math.round(CONFIG.W * s) + "px";
+  cv.style.height = Math.round(CONFIG.H * s) + "px";
+}
+window.addEventListener("resize", fit);
+fit();
+
+const C = CONFIG.colors;
+const RADAR_LEFT_PAD = 0;
+const AIRCRAFT_HEADING = 280;
+const groundRadar = { bearing: 200, range: 32000, sweepDegPerSec: 90 };
+const TWS_TRACK_TIMEOUT = 6;
+const TWS_INERTIAL_TIMEOUT = 10;
+const CONTACT_MEMORY = 12;
+const ACM_BOX = 200;
+const ACM_MAX_RANGE = 12000;
+const modeList = ["SRC", "SRC PD", "TWS", "ACM"];
+const MISSILE_PROFILES = {
+  IR: { name: "AIM-9M", maxEffectiveRange: 6000, noEscapeMax: 4500, noEscapeMin: 800, minManeuverRange: 300 },
+  SARH: { name: "AIM-7M", maxEffectiveRange: 25000, noEscapeMax: 16000, noEscapeMin: 4000, minManeuverRange: 1500 },
+  ARH: { name: "AIM-120", maxEffectiveRange: 35000, noEscapeMax: 22000, noEscapeMin: 3000, minManeuverRange: 800, pitbullRange: 18000 }
+};
+
+const state = {
+  radarOn: true,
+  modeIndex: 1,
+  rangeIndex: 2,
+  scanIndex: 0,
+  scanAz: 0,
+  scanEl: 0,
+  panelDisplay: 0,
+  helpOpen: false,
+  seeker: "SEARCHING",
+  seekerRing: { x: CONFIG.W / 2, y: CONFIG.H / 2, aligned: false },
+  progress: 0,
+  trackTime: 0,
+  irMode: false,
+  irSeekerOn: false,
+  seekerOn: false,
+  lockedId: null,
+  twsTrack: null,
+  twsHold: false,
+  radarClearUntil: -99,
+  acmUnlockAt: -99,
+  lockState: "none",
+  lockProgress: 0,
+  fired: false,
+  fireTime: -99,
+  missileActive: false,
+  missileTargetId: null,
+  missileLaunchProfile: "SARH",
+  missileEndTime: 0,
+  missileLastPanel: null,
+  missileOutcome: "",
+  missileOutcomeTime: -99,
+  seekerInertialPoint: null,
+  missileProfile: "SARH",
+  rackOpen: false,
+  rackSelected: -1,
+  rackHover: -1,
+  strobe: { x: 188, y: 183 },
+  mouse: { x: 0, y: 0, down: false, dragging: false },
+  dragMode: null,
+  dragScan: null,
+  buttonHold: null,
+  lastClick: { t: 0, id: null },
+  time: 0,
+  altHeld: false,
+  hitButtons: [],
+  hitBlips: [],
+  hitRack: []
+};
+
+const targets = [
+  { id: 1, name: "米格-15", alt: 1200, spd: 850, hdg: 95, engine: "涡喷", az: -16, el: 3, range: 1900, closure: 180, closureBase: 180, closureSwing: 36, rcs: 0.7 },
+  { id: 2, name: "单发喷气", alt: 5000, spd: 780, hdg: 310, engine: "涡喷", az: 9, el: -1, range: 14400, closure: 124, closureBase: 124, closureSwing: 28, rcs: 0.5 },
+  { id: 3, name: "F-4E", alt: 6500, spd: 1100, hdg: 240, engine: "涡扇", az: 27, el: 5, range: 8800, closure: -60, closureBase: -60, closureSwing: 24, rcs: 1.0 },
+  { id: 4, name: "A-4E", alt: 3000, spd: 900, hdg: 60, engine: "涡喷", az: -42, el: -4, range: 26000, closure: 6, closureBase: 6, closureSwing: 30, rcs: 0.8 },
+  { id: 5, name: "高空靶机", alt: 11500, spd: 750, hdg: 180, engine: "涡喷", az: 1, el: 18, range: 9200, closure: 60, closureBase: 60, closureSwing: 20, rcs: 0.6 },
+  { id: 6, name: "低空靶机", alt: 450, spd: 600, hdg: 20, engine: "涡桨", az: -28, el: -18, range: 17500, closure: -80, closureBase: -80, closureSwing: 24, rcs: 0.7 },
+  { id: 8, name: "远距靶机", alt: 6000, spd: 800, hdg: 190, engine: "涡扇", az: 0, el: 0, range: 11500, closure: 40, closureBase: 40, closureSwing: 20, rcs: 0.6 }
+];
+
+const rackSlots = [];
+rackSlots[0] = { label: "IR", name: "红外弹", kind: "missile", ok: true };
+rackSlots[1] = { label: "SARH", name: "半主动雷达弹", kind: "missile", ok: true };
+rackSlots[2] = { label: "ARH", name: "主动雷达弹", kind: "missile", ok: true };
+rackSlots[3] = { label: "TNT", name: "TNT", kind: "tnt", ok: true };
+rackSlots[4] = { label: "ARW", name: "箭", kind: "arrow", ok: true };
+rackSlots[5] = { label: "FW", name: "烟花火箭", kind: "firework", ok: true };
+rackSlots[9] = { label: "DIRT", name: "泥土", kind: "gray", ok: false };
+rackSlots[10] = { label: "GEM", name: "钻石", kind: "gray", ok: false };
+rackSlots[11] = { label: "APPLE", name: "苹果", kind: "gray", ok: false };
+rackSlots[12] = { label: "RED", name: "红石", kind: "gray", ok: false };
+rackSlots[13] = { label: "BREAD", name: "面包", kind: "gray", ok: false };
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function rad(d) { return d * Math.PI / 180; }
+function lockedTarget() {
+  if (state.lockedId == null) return null;
+  return targets.find(t => t.id === state.lockedId) || null;
+}
+function currentMode() { return modeList[state.modeIndex]; }
+function activeMissileProfile() { return MISSILE_PROFILES[state.missileProfile] || MISSILE_PROFILES.SARH; }
+function seenAt(t) {
+  return t.lastSeen == null ? -999 : t.lastSeen;
+}
+function twsTrackTarget() {
+  const tr = state.twsTrack;
+  if (!tr || state.time - tr.lastMeasured > TWS_INERTIAL_TIMEOUT) return null;
+  return targets.find(t => t.id === tr.id) || null;
+}
+function activeTarget() {
+  return lockedTarget() || (currentMode() === "TWS" ? twsTrackTarget() : null);
+}
+function radarUiCleared() {
+  return state.time < state.radarClearUntil;
+}
+function scanHalf() { return CONFIG.scans[state.scanIndex]; }
+function effectiveScanHalf() { return currentMode() === "ACM" ? 3 : scanHalf(); }
+function clampScan() {
+  const azLimit = 60 - effectiveScanHalf();
+  state.scanAz = clamp(state.scanAz, -azLimit, azLimit);
+  state.scanEl = clamp(state.scanEl, -20, 20);
+}
+function inScanVolume(t) {
+  if (!state.radarOn) return false;
+  if (t.range > CONFIG.ranges[state.rangeIndex]) return false;
+  if (Math.abs(t.az - state.scanAz) > effectiveScanHalf()) return false;
+  if (Math.abs(t.el - state.scanEl) > 20) return false;
+  if (currentMode() !== "SRC" && Math.abs(t.closure) < 20) return false;
+  return true;
+}
+
+function contactVisible(t) {
+  if (!inScanVolume(t)) return false;
+  return state.time - seenAt(t) < CONTACT_MEMORY;
+}
+
+function headingArrow(hdg) {
+  const dirs = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
+  return dirs[Math.round(((hdg % 360 + 360) % 360) / 45) % 8];
+}
+
+function targetDataLine(t) {
+  return Math.round(t.spd) + " km/h  " + Math.round(t.hdg) + "°" + headingArrow(t.hdg) + "  " + t.engine;
+}
+
+function makeTwsTrack(t) {
+  return {
+    id: t.id, az: t.az, el: t.el, range: t.range,
+    vAz: 0, vEl: 0, vRange: 0,
+    lastMeasured: state.time,
+    spd: t.spd, hdg: t.hdg, engine: t.engine
+  };
+}
+
+function measureTwsTrack(t) {
+  const tr = state.twsTrack;
+  if (!tr || tr.id !== t.id) return;
+  const dt = state.time - tr.lastMeasured;
+  if (dt > 0.05 && dt < 8) {
+    const k = 0.55;
+    tr.vAz = tr.vAz * (1 - k) + ((t.az - tr.az) / dt) * k;
+    tr.vEl = tr.vEl * (1 - k) + ((t.el - tr.el) / dt) * k;
+    tr.vRange = tr.vRange * (1 - k) + ((t.range - tr.range) / dt) * k;
+  }
+  tr.az = t.az;
+  tr.el = t.el;
+  tr.range = t.range;
+  tr.lastMeasured = state.time;
+  tr.spd = t.spd;
+  tr.hdg = t.hdg;
+  tr.engine = t.engine;
+}
+
+function twsPredicted(tr) {
+  const dt = state.time - tr.lastMeasured;
+  return {
+    az: tr.az + tr.vAz * dt,
+    el: tr.el + tr.vEl * dt,
+    range: Math.max(0, tr.range + tr.vRange * dt)
+  };
+}
+
+function maintainTwsTrack(paintEdges) {
+  if (state.lockedId != null) {
+    const t = lockedTarget();
+    if (!t) return;
+    if (!state.twsTrack || state.twsTrack.id !== t.id) state.twsTrack = makeTwsTrack(t);
+    if (paintEdges.includes(t)) measureTwsTrack(t);
+    return;
+  }
+  if (state.twsTrack && state.time - state.twsTrack.lastMeasured > TWS_INERTIAL_TIMEOUT) {
+    state.twsTrack = null;
+  }
+  if (state.twsTrack) {
+    const t = targets.find(v => v.id === state.twsTrack.id);
+    if (t && paintEdges.includes(t)) measureTwsTrack(t);
+    return;
+  }
+  if (paintEdges.length) {
+    state.twsTrack = makeTwsTrack(paintEdges[0]);
+    state.twsHold = false;
+  }
+}
+
+function updateTracks() {
+  if (!state.radarOn) return;
+  const rs = rasterState();
+  const paintEdges = [];
+  for (const t of targets) {
+    const painted = inScanVolume(t) &&
+      Math.abs(t.az - rs.sweepAz) < 6 &&
+      Math.abs(t.el - rs.rowEl) < 4;
+    if (painted) {
+      t.lastSeen = state.time;
+      if (!t.wasPainted) {
+        paintEdges.push(t);
+        if (currentMode() === "ACM" && inAcmBox(t) && t.range <= ACM_MAX_RANGE) {
+          t.acmHits = (t.acmHits || 0) + 1;
+        }
+      }
+    }
+    t.wasPainted = painted;
+    if (currentMode() === "ACM" && (!inAcmBox(t) || t.range > ACM_MAX_RANGE)) {
+      t.acmHits = 0;
+    }
+  }
+  if (currentMode() === "TWS") maintainTwsTrack(paintEdges);
+}
+
+function updateTwsScan(dt) {
+  if (currentMode() !== "TWS" || !state.radarOn) return;
+  if (!state.twsTrack) return;
+  if (state.time - state.twsTrack.lastMeasured > TWS_INERTIAL_TIMEOUT) {
+    state.twsTrack = null;
+    return;
+  }
+  const pred = twsPredicted(state.twsTrack);
+  const rate = 22;
+  state.scanAz += clamp(pred.az - state.scanAz, -rate * dt, rate * dt);
+  state.scanEl += clamp(pred.el - state.scanEl, -rate * dt, rate * dt);
+  clampScan();
+}
+function clearLock() {
+  if (currentMode() === "ACM") {
+    state.acmUnlockAt = state.time;
+    targets.forEach(t => { t.acmHits = 0; });
+  }
+  state.twsTrack = null;
+  state.twsHold = currentMode() === "TWS";
+  state.radarClearUntil = state.time + 1.2;
+  targets.forEach(t => { t.wasPainted = false; t.lastSeen = -999; });
+  state.lockedId = null;
+  state.lockState = "none";
+  state.lockProgress = 0;
+  state.fired = false;
+  state.fireTime = -99;
+  state.seekerOn = false;
+  state.seeker = "SEARCHING";
+  state.progress = 0;
+  state.trackTime = 0;
+}
+function beginLock(t) {
+  state.lockedId = t.id;
+  state.lockState = "acquiring";
+  state.lockProgress = 0;
+  state.fired = false;
+  state.fireTime = -99;
+  state.seekerOn = false;
+  state.seeker = "SEARCHING";
+  state.progress = 0;
+  state.trackTime = 0;
+}
+function selectRackSlot(idx) {
+  const item = rackSlots[idx];
+  if (!item || !item.ok) return;
+  state.rackSelected = idx;
+  if (item.label === "IR") state.missileProfile = "IR";
+  else if (item.label === "SARH") state.missileProfile = "SARH";
+  else if (item.label === "ARH") state.missileProfile = "ARH";
+}
+function selectNextTarget() {
+  const rect = panelRect();
+  if (currentMode() === "TWS") {
+    const wasLocked = state.lockedId != null;
+    const currentId = wasLocked ? state.lockedId : (state.twsTrack ? state.twsTrack.id : null);
+    const candidates = targets
+      .filter(t => t.range <= CONFIG.ranges[state.rangeIndex] && Math.abs(t.closure) >= 20 &&
+        state.time - seenAt(t) < CONTACT_MEMORY)
+      .sort((a, b) => a.range - b.range);
+    if (!candidates.length) return;
+    const idx = candidates.findIndex(t => t.id === currentId);
+    const next = candidates[(idx + 1) % candidates.length];
+    state.twsTrack = makeTwsTrack(next);
+    state.twsHold = false;
+    state.fired = false;
+    state.fireTime = -99;
+    state.seekerOn = false;
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+    if (wasLocked) {
+      state.lockedId = next.id;
+      state.lockState = "tracking";
+      state.lockProgress = 1;
+    } else {
+      state.lockedId = null;
+      state.lockState = "none";
+      state.lockProgress = 0;
+    }
+    const p = targetBlip(next, rect);
+    state.strobe = { x: p.x - rect.x, y: p.y - rect.y };
+    return;
+  }
+  const vis = targets.filter(t => contactVisible(t) && t.range <= CONFIG.ranges[state.rangeIndex]);
+  if (!vis.length) return;
+  const sx = rect.x + state.strobe.x;
+  const sy = rect.y + state.strobe.y;
+  let nearest = vis[0], bestD = Infinity;
+  for (const t of vis) {
+    const p = targetBlip(t, rect);
+    const d = Math.hypot(p.x - sx, p.y - sy);
+    if (d < bestD) { nearest = t; bestD = d; }
+  }
+  const sorted = vis.slice().sort((a, b) => a.range - b.range);
+  const idx = sorted.indexOf(nearest);
+  const t = sorted[(idx + 1) % sorted.length];
+  const p = targetBlip(t, rect);
+  state.strobe = { x: p.x - rect.x, y: p.y - rect.y };
+}
+function attemptLock() {
+  if (currentMode() === "TWS") return;
+  const rect = panelRect();
+  const sx = rect.x + state.strobe.x;
+  const sy = rect.y + state.strobe.y;
+  let best = null, bestD = 30;
+  for (const t of targets) {
+    if (!contactVisible(t)) continue;
+    if (currentMode() === "ACM" && !inAcmBox(t)) continue;
+    const p = targetBlip(t, rect);
+    if (p.x < rect.x || p.x > rect.x + rect.w || p.y < rect.y || p.y > rect.y + rect.h) continue;
+    const d = Math.hypot(p.x - sx, p.y - sy);
+    if (d < bestD) { best = t; bestD = d; }
+  }
+  if (!best || state.lockedId === best.id) return false;
+  const p = targetBlip(best, rect);
+  state.strobe = { x: p.x - rect.x, y: p.y - rect.y };
+  beginLock(best);
+  return true;
+}
+function attemptLockOnId(id) {
+  if (currentMode() === "ACM") return;
+  const t = targets.find(v => v.id === id);
+  if (!t || !contactVisible(t)) return;
+  const rect = panelRect();
+  const p = targetBlip(t, rect);
+  state.strobe = { x: p.x - rect.x, y: p.y - rect.y };
+  if (currentMode() === "TWS") {
+    const wasLocked = state.lockedId != null;
+    state.twsTrack = makeTwsTrack(t);
+    state.twsHold = false;
+    state.fired = false;
+    state.fireTime = -99;
+    state.seekerOn = false;
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+    if (wasLocked) {
+      state.lockedId = t.id;
+      state.lockState = "tracking";
+      state.lockProgress = 1;
+    } else {
+      state.lockedId = null;
+      state.lockState = "none";
+      state.lockProgress = 0;
+    }
+    return;
+  }
+  if (state.lockedId !== t.id) beginLock(t);
+}
+function toggleLock() {
+  if (currentMode() === "TWS") {
+    if (state.lockedId != null) {
+      clearLock();
+      return;
+    }
+    const t = twsTrackTarget();
+    if (t) {
+      state.twsHold = false;
+      beginLock(t);
+    }
+    return;
+  }
+  if (state.lockedId != null) {
+    clearLock();
+    return;
+  }
+  if (currentMode() === "ACM") return;
+  attemptLock();
+}
+function sarhSingleWhite() {
+  return state.missileProfile === "SARH" && state.seeker === "SEARCHING";
+}
+
+function canLaunchNow() {
+  if (!state.seekerOn || state.fired) return false;
+  if (!activeTarget()) return false;
+  if (state.lockedId != null) {
+    if (state.lockState !== "tracking") return false;
+  } else if (currentMode() !== "TWS" || !twsTrackTarget()) {
+    return false;
+  }
+  return !sarhSingleWhite();
+}
+
+function fireMissile() {
+  if (!canLaunchNow()) return false;
+  const missileTarget = activeTarget();
+  state.fired = true;
+  state.fireTime = state.time;
+  state.seekerOn = false;
+  state.seeker = "SEARCHING";
+  state.progress = 0;
+  state.trackTime = 0;
+  state.seekerInertialPoint = null;
+  if (missileTarget) {
+    const rect = panelRect();
+    const p = targetBlip(missileTarget, rect);
+    state.missileActive = true;
+    state.missileTargetId = missileTarget.id;
+    state.missileLaunchProfile = state.missileProfile;
+    state.missileEndTime = state.time + 4.0;
+    state.missileLastPanel = { x: p.x, y: p.y };
+    state.missileOutcome = "";
+    state.missileOutcomeTime = -99;
+  }
+  return true;
+}
+function armSeeker() {
+  state.seekerRing.x = CONFIG.W / 2;
+  state.seekerRing.y = CONFIG.H / 2;
+  state.seekerRing.aligned = false;
+  state.seekerOn = true;
+  state.fired = false;
+  state.fireTime = -99;
+  state.seeker = "SEARCHING";
+  state.progress = 0;
+  state.trackTime = 0;
+}
+
+function toggleSeeker() {
+  if (!activeTarget()) return;
+  if (state.seekerOn) {
+    state.seekerOn = false;
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+  } else {
+    armSeeker();
+  }
+}
+
+function lockOrFire() {
+  if (!activeTarget()) return false;
+  if (!state.seekerOn) {
+    armSeeker();
+    return true;
+  }
+  return fireMissile();
+}
+function toggleAcm() {
+  state.modeIndex = currentMode() === "ACM" ? 1 : 3;
+  state.twsTrack = null;
+  if (currentMode() === "ACM") {
+    state.scanAz = 0;
+    state.scanEl = 0;
+    clearLock();
+    state.acmUnlockAt = state.time;
+  }
+  clampScan();
+}
+function updateModeLogic(dt) {
+  if (currentMode() === "TWS") updateTwsScan(dt);
+  const lt = lockedTarget();
+  if (lt && !contactVisible(lt)) {
+    const tr = state.twsTrack;
+    const keepTws = currentMode() === "TWS" && tr && tr.id === lt.id &&
+      state.time - tr.lastMeasured < TWS_INERTIAL_TIMEOUT;
+    if (!keepTws) clearLock();
+  } else if (lt && state.lockState === "acquiring") {
+    const q = activeQuality(lt);
+    if (q > 0.05) state.lockProgress += dt * (0.45 + q * 0.75) / 1.1;
+    if (state.lockProgress >= 1) {
+      state.lockProgress = 1;
+      state.lockState = "tracking";
+    }
+  }
+  if (!state.radarOn || currentMode() !== "ACM") return;
+  let best = null, bestD = Infinity;
+  for (const t of targets) {
+    if (!contactVisible(t) || !inAcmBox(t)) continue;
+    if (t.range > ACM_MAX_RANGE) continue;
+    if (t.lastSeen <= state.acmUnlockAt) continue;
+    const need = t.range <= 6000 ? 1 : t.range <= 12000 ? 2 : 3;
+    if ((t.acmHits || 0) < need) continue;
+    const d = Math.hypot(t.az, t.el);
+    if (d < bestD) { best = t; bestD = d; }
+  }
+  if (best && state.lockedId !== best.id) {
+    state.lockedId = best.id;
+    state.lockState = "tracking";
+    state.lockProgress = 1;
+    state.fired = false;
+    state.fireTime = -99;
+    state.seekerOn = false;
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+  }
+}
+function activeQuality(t) {
+  if (!t) return 0;
+  const rangeQ = clamp(1 - t.range / (CONFIG.ranges[state.rangeIndex] * 1.15), 0, 1);
+  const closureQ = clamp(Math.abs(t.closure) / 300, 0, 1);
+  const rcsQ = clamp(t.rcs, 0, 1);
+  const notch = Math.abs(t.closure) < 20 ? 0.1 : 1;
+  return clamp(0.35 * rangeQ + 0.25 * closureQ + 0.2 * rcsQ + 0.2 * notch, 0, 1);
+}
+
+function updateTargets(dt) {
+  for (const t of targets) {
+    t.az += Math.sin(state.time * 0.25 + t.id) * dt * 0.8;
+    t.el += Math.cos(state.time * 0.2 + t.id * 2) * dt * 0.3;
+    t.range += Math.sin(state.time * 0.12 + t.id) * dt * 120;
+    t.range = clamp(t.range, 600, 80000);
+    t.az = clamp(t.az, -70, 70);
+    t.el = clamp(t.el, -25, 25);
+    t.closure = t.closureBase + Math.sin(state.time * 0.3 + t.id * 1.7) * t.closureSwing;
+  }
+}
+
+function updateSeeker(dt) {
+  if (state.irMode) {
+    const t = nearestBoresight();
+    state.seeker = state.irSeekerOn ? (t ? "TRACKING" : "SEARCHING") : "SEARCHING";
+    state.progress = t ? 1 : 0;
+    return;
+  }
+  if (!state.seekerOn) {
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+    return;
+  }
+  const t = lockedTarget();
+  if (!t) {
+    state.seekerRing.x = CONFIG.W / 2;
+    state.seekerRing.y = CONFIG.H / 2;
+    state.seekerRing.aligned = false;
+    state.seeker = "SEARCHING";
+    state.progress = Math.max(0, state.progress - dt * 1.5);
+    return;
+  }
+  const targetPos = targetScreen(t);
+  const r = state.seekerRing;
+  const dx = targetPos.x - r.x;
+  const dy = targetPos.y - r.y;
+  const dist = Math.hypot(dx, dy);
+  const step = CONFIG.seeker.slewPxPerSecond * dt;
+  if (dist <= step + 0.5) {
+    r.x = targetPos.x;
+    r.y = targetPos.y;
+    r.aligned = true;
+  } else {
+    r.x += dx / dist * step;
+    r.y += dy / dist * step;
+    r.aligned = dist - step <= 2;
+  }
+  if (!r.aligned) {
+    state.seeker = "SEARCHING";
+    state.progress = 0;
+    state.trackTime = 0;
+    return;
+  }
+  const q = activeQuality(t);
+  if (state.seeker === "SEARCHING") {
+    if (q > 0.12) state.seeker = "ACQUIRING";
+  }
+  if (state.seeker === "ACQUIRING") {
+    state.progress += dt * (0.35 + q * 0.65) / CONFIG.seeker.acquireSeconds;
+    if (state.progress >= 1) {
+      state.progress = 1;
+      state.seeker = "TRACKING";
+      state.trackTime = 0;
+    }
+    if (q < 0.04) {
+      state.progress -= dt * 1.2;
+      if (state.progress <= 0) { state.progress = 0; state.seeker = "SEARCHING"; }
+    }
+  } else if (state.seeker === "TRACKING") {
+    state.trackTime += dt;
+    if (q > 0.6 && state.trackTime > CONFIG.seeker.highConfidenceSeconds) state.seeker = "HIGH";
+    if (q < 0.22) { state.seeker = "ACQUIRING"; state.progress = clamp(state.progress - dt * 0.8, 0.15, 1); }
+  } else if (state.seeker === "HIGH") {
+    if (q < 0.45) { state.seeker = "TRACKING"; state.trackTime = 0; }
+  }
+}
+
+function nearestBoresight() {
+  let best = null, bestD = Infinity;
+  for (const t of targets) {
+    const d = Math.hypot(t.az, t.el * 1.6);
+    if (d < CONFIG.seeker.fovDeg && d < bestD) { best = t; bestD = d; }
+  }
+  return best;
+}
+
+function panelRect() {
+  const p = CONFIG.panel;
+  return { x: CONFIG.W - p.right - p.size, y: CONFIG.H - p.bottom - p.size, w: p.size, h: p.size };
+}
+
+function targetScreen(t) {
+  const tanV = Math.tan(rad(CONFIG.fovY / 2));
+  const tanH = tanV * (CONFIG.W / CONFIG.H);
+  const x = CONFIG.W / 2 + Math.tan(rad(t.az)) / tanH * (CONFIG.W / 2);
+  const y = CONFIG.H / 2 - Math.tan(rad(t.el)) / tanV * (CONFIG.H / 2);
+  return { x, y };
+}
+
+function radarPlot(rect) {
+  return { x: rect.x + RADAR_LEFT_PAD, y: rect.y, w: rect.w - RADAR_LEFT_PAD, h: rect.h };
+}
+
+function inAcmBox(t) {
+  const pos = targetScreen(t);
+  return Math.abs(pos.x - CONFIG.W / 2) <= ACM_BOX && Math.abs(pos.y - CONFIG.H / 2) <= ACM_BOX;
+}
+
+function targetBlip(t, rect) {
+  const plot = radarPlot(rect);
+  const range = CONFIG.ranges[state.rangeIndex];
+  const x = plot.x + plot.w / 2 + (t.az / 60) * (plot.w / 2);
+  const y = plot.y + plot.h - (t.range / range) * plot.h;
+  return { x, y };
+}
+
+function scanBand(rect) {
+  const plot = radarPlot(rect);
+  const half = effectiveScanHalf();
+  const cx = plot.x + plot.w / 2;
+  const x0 = cx + ((state.scanAz - half) / 60) * (plot.w / 2);
+  const x1 = cx + ((state.scanAz + half) / 60) * (plot.w / 2);
+  return {
+    x0: clamp(x0, plot.x, plot.x + plot.w),
+    x1: clamp(x1, plot.x, plot.x + plot.w),
+    half
+  };
+}
+
+function ringRadius(deg) {
+  const tanV = Math.tan(rad(CONFIG.fovY / 2));
+  return Math.tan(rad(deg)) / tanV * (CONFIG.H / 2);
+}
+
+function drawText(text, x, y, color, size, align) {
+  ctx.fillStyle = color;
+  ctx.font = (size || 14) + "px Menlo, Consolas, monospace";
+  ctx.textAlign = align || "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(text, x, y);
+}
+
+function drawCircle(x, y, r, color, width) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width || 2;
+  ctx.stroke();
+}
+
+function drawArc(x, y, r, start, end, color, width) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, start, end);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width || 3;
+  ctx.stroke();
+}
+
+function drawTargetBox(x, y, size, color) {
+  const b = size;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - b, y - b, b * 2, b * 2);
+}
+
+function drawAttemptBracket(x, y, r, L) {
+  r = r || 18;
+  L = L || 8;
+  const pulse = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(state.time * 9));
+  ctx.save();
+  ctx.strokeStyle = C.green;
+  ctx.globalAlpha = pulse;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = "rgba(107,255,107,0.8)";
+  ctx.shadowBlur = 6;
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const px = x + sx * r, py = y + sy * r;
+    ctx.beginPath();
+    ctx.moveTo(px, py - sy * L);
+    ctx.lineTo(px, py);
+    ctx.lineTo(px - sx * L, py);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTrackingBox(x, y) {
+  ctx.save();
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = "rgba(107,255,107,0.9)";
+  ctx.shadowBlur = 7;
+  ctx.strokeRect(x - 10, y - 10, 20, 20);
+  ctx.restore();
+}
+
+function drawOwnShip(x, y) {
+  ctx.save();
+  ctx.fillStyle = C.green;
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 1;
+  ctx.shadowColor = "rgba(107,255,107,0.9)";
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(x, y - 8);
+  ctx.lineTo(x - 2, y - 1);
+  ctx.lineTo(x - 8, y + 1);
+  ctx.lineTo(x - 8, y + 3);
+  ctx.lineTo(x - 2, y + 3);
+  ctx.lineTo(x - 3, y + 7);
+  ctx.lineTo(x, y + 5);
+  ctx.lineTo(x + 3, y + 7);
+  ctx.lineTo(x + 2, y + 3);
+  ctx.lineTo(x + 8, y + 3);
+  ctx.lineTo(x + 8, y + 1);
+  ctx.lineTo(x + 2, y - 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLockReticle(x, y, color, thick) {
+  const r = 24;
+  drawCircle(x, y, r, color, thick ? 4 : 2.5);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thick ? 4 : 2.5;
+  ctx.beginPath();
+  ctx.moveTo(x - 1, y - r - 8); ctx.lineTo(x + 1, y - r + 2);
+  ctx.moveTo(x - 1, y + r - 2); ctx.lineTo(x + 1, y + r + 8);
+  ctx.moveTo(x - r - 8, y - 1); ctx.lineTo(x - r + 2, y + 1);
+  ctx.moveTo(x + r - 2, y - 1); ctx.lineTo(x + r + 8, y + 1);
+  ctx.stroke();
+}
+
+function drawTopInfo() {
+  const x = 30, y = 28;
+  const lines = [
+    ["速度", "750 km/h"],
+    ["海拔高度", "680 米"],
+    ["", ""],
+    ["空对空", "6(左)  " + activeMissileProfile().name],
+    ["热焰弹", "60"],
+    ["干扰箔", "320"]
+  ];
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  lines.forEach((l, i) => {
+    drawText(l[0], x, y + i * 22, "#8f9f8f", 14);
+    drawText(l[1], x + 120, y + i * 22, i === 0 || i === 1 ? "#ff8a4a" : "#cfd8cf", 14);
+  });
+}
+
+function drawCompass() {
+  const cx = CONFIG.W / 2, y = 26;
+  const heading = AIRCRAFT_HEADING;
+  ctx.strokeStyle = "#9aa59a";
+  ctx.fillStyle = "#9aa59a";
+  ctx.lineWidth = 1;
+  ctx.textAlign = "center";
+  ctx.font = "13px Menlo, Consolas, monospace";
+  for (let d = -30; d <= 30; d += 5) {
+    const val = (heading + d + 360) % 360;
+    const x = cx + (d / 30) * 340;
+    const h = d % 10 === 0 ? 10 : 5;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y + h);
+    ctx.stroke();
+    if (d % 10 === 0) {
+      let label = String(Math.round(val));
+      if (val === 270) label = "W";
+      if (val === 0) label = "N";
+      if (val === 90) label = "E";
+      if (val === 180) label = "S";
+      ctx.fillText(label, x, y - 16);
+    }
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx, y + 18);
+  ctx.lineTo(cx - 5, y + 28);
+  ctx.lineTo(cx + 5, y + 28);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawRwr() {
+  const x = 200, y = 600, r = 115;
+  drawCircle(x, y, r, C.greenDim, 2);
+  drawCircle(x, y, r - 14, C.greenDim, 1);
+  ctx.strokeStyle = C.greenDim;
+  ctx.beginPath();
+  ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y);
+  ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 8);
+  ctx.stroke();
+  drawText("RWR", x, y - r - 16, C.greenDim, 10, "center");
+
+  const rel = ((groundRadar.bearing - AIRCRAFT_HEADING + 540) % 360) - 180;
+  const a = rad(rel);
+  const tx = x + Math.sin(a) * r * 0.72;
+  const ty = y - Math.cos(a) * r * 0.72;
+  const beam = (state.time * groundRadar.sweepDegPerSec) % 360;
+  const toPlayer = (groundRadar.bearing + 180) % 360;
+  let diff = Math.abs(beam - toPlayer);
+  if (diff > 180) diff = 360 - diff;
+  const painted = diff < 14;
+  const col = painted ? C.green : C.greenDim;
+  ctx.strokeStyle = painted ? "rgba(160,255,160,0.35)" : "rgba(107,255,107,0.18)";
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+  drawCircle(tx, ty, 7, col, painted ? 2 : 1.5);
+  ctx.fillStyle = col;
+  ctx.fillRect(tx - 1, ty - 1, 3, 3);
+  drawText("SRCH", tx, ty + 11, col, 8, "center");
+  if (painted) {
+    const pulse = 0.55 + 0.45 * Math.sin(state.time * 9);
+    drawCircle(tx, ty, 14, "rgba(160,255,160," + (0.3 + 0.4 * pulse).toFixed(2) + ")", 1.5);
+    drawCircle(x, y, r + 4, "rgba(160,255,160,0.2)", 1);
+    drawText("SEARCH", tx, ty - 24, C.green, 9, "center");
+  }
+}
+
+function drawGroundRadarSite() {
+  const x = 330, y = 850;
+  ctx.strokeStyle = "rgba(107,255,107,0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x - 110, y + 20); ctx.lineTo(x + 110, y + 20); ctx.stroke();
+  ctx.strokeStyle = C.greenDim;
+  ctx.beginPath(); ctx.moveTo(x, y + 20); ctx.lineTo(x, y - 8); ctx.stroke();
+  ctx.strokeStyle = "rgba(107,255,107,0.15)";
+  for (let rr = 16; rr <= 54; rr += 13) {
+    ctx.beginPath(); ctx.arc(x, y - 8, rr, -Math.PI * 0.15, Math.PI * 1.15); ctx.stroke();
+  }
+  const beam = (state.time * groundRadar.sweepDegPerSec) % 360;
+  const bx = x + Math.sin(rad(beam)) * 50;
+  const by = (y - 8) - Math.cos(rad(beam)) * 50;
+  ctx.strokeStyle = "rgba(160,255,160,0.6)";
+  ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(bx, by); ctx.stroke();
+  ctx.fillStyle = C.green;
+  ctx.beginPath(); ctx.arc(x, y - 8, 2, 0, Math.PI * 2); ctx.fill();
+  drawText("GROUND SEARCH RADAR", x - 110, y + 26, C.greenDim, 10);
+}
+
+function drawElevationScale(rect, bottom) {
+  const x0 = rect.x + 2;
+  const w = 32;
+  const top = rect.y + 40;
+  const bot = bottom - 14;
+  ctx.fillStyle = "rgba(0,45,4,0.88)";
+  ctx.fillRect(x0, rect.y + 34, w, rect.h - 42);
+  const yFor = el => top + (40 - clamp(el, -40, 40)) / 80 * (bot - top);
+  const axisX = x0 + 26;
+  drawText("EL", x0 + 1, rect.y + 5, C.greenDim, 10);
+  ctx.strokeStyle = "rgba(107,255,107,0.45)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(axisX, top); ctx.lineTo(axisX, bot); ctx.stroke();
+  const beamTop = yFor(state.scanEl + 20);
+  const beamBot = yFor(state.scanEl - 20);
+  ctx.fillStyle = "rgba(107,255,107,0.16)";
+  ctx.fillRect(axisX + 2, beamTop, 4, beamBot - beamTop);
+  for (let el = -40; el <= 40; el += 20) {
+    const y = yFor(el);
+    ctx.strokeStyle = "rgba(107,255,107,0.5)";
+    ctx.beginPath(); ctx.moveTo(axisX - 3, y); ctx.lineTo(axisX + 5, y); ctx.stroke();
+    drawText(el + "°", x0 + 1, y - 5, C.green, 9, "left");
+  }
+  if (!radarUiCleared()) {
+    for (const t of targets) {
+      const y = yFor(t.el);
+      ctx.fillStyle = contactVisible(t) ? C.green : "rgba(107,255,107,0.3)";
+      ctx.fillRect(axisX + 3, y - 1, 2, 3);
+    }
+  }
+  const cy = yFor(state.scanEl);
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(axisX - 5, cy); ctx.lineTo(axisX + 6, cy); ctx.stroke();
+}
+
+function drawCornerBox(x, y, r, L, color, width, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha == null ? 1 : alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width || 2;
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const px = x + sx * r, py = y + sy * r;
+    ctx.beginPath();
+    ctx.moveTo(px, py - sy * L);
+    ctx.lineTo(px, py);
+    ctx.lineTo(px - sx * L, py);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function azToScreenX(az) {
+  const tanV = Math.tan(rad(CONFIG.fovY / 2));
+  const tanH = tanV * (CONFIG.W / CONFIG.H);
+  return CONFIG.W / 2 + Math.tan(rad(az)) / tanH * (CONFIG.W / 2);
+}
+
+function elToScreenY(el) {
+  const tanV = Math.tan(rad(CONFIG.fovY / 2));
+  return CONFIG.H / 2 - Math.tan(rad(el)) / tanV * (CONFIG.H / 2);
+}
+
+function rasterState() {
+  const half = effectiveScanHalf();
+  const rows = 5;
+  const sweep = currentMode() === "ACM" ? 0.45 : 1.3;
+  const step = Math.floor(state.time / sweep);
+  const cycle = rows * 2 - 2;
+  const p = step % cycle;
+  const row = p < rows ? p : cycle - p;
+  const dir = step % 2 === 0 ? 1 : -1;
+  const hFrac = (state.time % sweep) / sweep;
+  return {
+    row,
+    rows,
+    hFrac,
+    dir,
+    rowEl: state.scanEl + 20 - (row + 0.5) * (40 / rows),
+    sweepAz: dir > 0
+      ? state.scanAz - half + hFrac * 2 * half
+      : state.scanAz + half - hFrac * 2 * half
+  };
+}
+
+function drawRasterScan(x0, x1, yTop, yBot) {
+  const rs = rasterState();
+  const yV = yTop + (rs.row + 0.5) * (yBot - yTop) / rs.rows;
+  const xS = rs.dir > 0 ? x0 + rs.hFrac * (x1 - x0) : x1 - rs.hFrac * (x1 - x0);
+  const vHalf = Math.min(30, (yBot - yTop) / 2);
+  const hHalf = Math.min(40, (x1 - x0) / 2);
+  ctx.save();
+  ctx.strokeStyle = "rgba(160,255,160,0.6)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x1, yV - vHalf); ctx.lineTo(x1, yV + vHalf);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(clamp(xS - hHalf, x0, x1), yV);
+  ctx.lineTo(clamp(xS + hHalf, x0, x1), yV);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawRadarScanOverlay() {
+  if (!state.radarOn) return;
+  const cx = CONFIG.W / 2, cy = CONFIG.H / 2;
+  if (currentMode() === "ACM") {
+    if (state.lockedId == null) {
+      const blink = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(state.time * 6));
+      drawCornerBox(cx, cy, ACM_BOX, 34, C.green, 1.5, blink);
+      drawText("ACM", cx - ACM_BOX, cy - ACM_BOX - 18, C.greenDim, 12, "left");
+    }
+    return;
+  }
+  const half = scanHalf();
+  const az0 = state.scanAz - half, az1 = state.scanAz + half;
+  const el0 = state.scanEl - 20, el1 = state.scanEl + 20;
+  const x0 = azToScreenX(az0), x1 = azToScreenX(az1);
+  const yTop = elToScreenY(el1), yBot = elToScreenY(el0);
+  ctx.save();
+  ctx.strokeStyle = "rgba(107,255,107,0.10)";
+  ctx.lineWidth = 1;
+  for (let a = Math.ceil(az0 / 15) * 15; a <= az1; a += 15) {
+    if (Math.abs(a) >= 88) continue;
+    const x = azToScreenX(a);
+    if (x < 0 || x > CONFIG.W) continue;
+    ctx.beginPath();
+    ctx.moveTo(x, clamp(yTop, -40, CONFIG.H + 40));
+    ctx.lineTo(x, clamp(yBot, -40, CONFIG.H + 40));
+    ctx.stroke();
+  }
+  for (let e = Math.ceil(el0 / 10) * 10; e <= el1; e += 10) {
+    if (Math.abs(e) >= 55) continue;
+    const y = elToScreenY(e);
+    if (y < 0 || y > CONFIG.H) continue;
+    ctx.beginPath();
+    ctx.moveTo(clamp(x0, -40, CONFIG.W + 40), y);
+    ctx.lineTo(clamp(x1, -40, CONFIG.W + 40), y);
+    ctx.stroke();
+  }
+  if (currentMode() !== "TWS") {
+    drawRasterScan(clamp(x0, 2, CONFIG.W - 4), clamp(x1, 2, CONFIG.W - 4), clamp(yTop, 2, CONFIG.H - 2), clamp(yBot, 2, CONFIG.H - 2));
+  }
+  ctx.restore();
+}
+
+function drawRadarPanel() {
+  const rect = panelRect();
+  const plot = radarPlot(rect);
+  const cx = plot.x + plot.w / 2;
+  const bottom = rect.y + rect.h;
+  state.hitBlips = [];
+
+  const panelBg = ctx.createLinearGradient(0, rect.y, 0, bottom);
+  panelBg.addColorStop(0, C.panelBgTop);
+  panelBg.addColorStop(1, C.panelBgBottom);
+  ctx.fillStyle = panelBg;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  const band = scanBand(rect);
+  const bandW = band.x1 - band.x0;
+  ctx.fillStyle = "rgba(70,255,70,0.10)";
+  ctx.fillRect(band.x0, rect.y + 1, bandW, rect.h - 2);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(band.x0, rect.y + 1, bandW, rect.h - 2);
+  ctx.clip();
+
+  ctx.strokeStyle = "rgba(140,255,140,0.05)";
+  ctx.lineWidth = 1;
+  for (let sy = rect.y + 2; sy < bottom; sy += 4) {
+    ctx.beginPath(); ctx.moveTo(band.x0, sy); ctx.lineTo(band.x1, sy); ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(80,255,80,0.34)";
+  ctx.lineWidth = 1;
+  for (let a = -45; a <= 45; a += 15) {
+    if (a === 0) continue;
+    const gx = cx + (a / 60) * (plot.w / 2);
+    if (gx < band.x0 || gx > band.x1) continue;
+    ctx.beginPath(); ctx.moveTo(gx, rect.y + 1); ctx.lineTo(gx, bottom - 1); ctx.stroke();
+  }
+  for (let i = 1; i <= 4; i++) {
+    const gy = rect.y + (rect.h * i) / 5;
+    ctx.beginPath(); ctx.moveTo(band.x0, gy); ctx.lineTo(band.x1, gy); ctx.stroke();
+  }
+
+  const centerX = cx + (state.scanAz / 60) * (plot.w / 2);
+  ctx.strokeStyle = C.green;
+  ctx.beginPath(); ctx.moveTo(centerX, rect.y + 1); ctx.lineTo(centerX, bottom - 1); ctx.stroke();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(140,255,140,0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(band.x0, rect.y + 1); ctx.lineTo(band.x0, bottom - 1);
+  ctx.moveTo(band.x1, rect.y + 1); ctx.lineTo(band.x1, bottom - 1);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.shadowColor = "rgba(107,255,107,0.8)";
+  ctx.shadowBlur = 9;
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.restore();
+
+  const period = currentMode() === "ACM" ? 0.9 : 2.6;
+  const phase = (state.time % period) / period;
+  const sweepFrac = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+  const sweepDir = phase < 0.5 ? 1 : -1;
+  const sweepX = band.x0 + 1 + sweepFrac * Math.max(1, bandW - 2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(band.x0, rect.y + 1, bandW, rect.h - 2);
+  ctx.clip();
+  const sweepGrad = ctx.createLinearGradient(sweepX - sweepDir * 24, 0, sweepX, 0);
+  sweepGrad.addColorStop(0, "rgba(107,255,107,0)");
+  sweepGrad.addColorStop(1, "rgba(107,255,107,0.2)");
+  ctx.fillStyle = sweepGrad;
+  ctx.fillRect(sweepX - (sweepDir > 0 ? 24 : 0), rect.y + 1, 24, rect.h - 2);
+  ctx.strokeStyle = "rgba(160,255,160,0.55)";
+  ctx.shadowColor = "rgba(107,255,107,0.9)";
+  ctx.shadowBlur = 6;
+  ctx.beginPath(); ctx.moveTo(sweepX, rect.y + 1); ctx.lineTo(sweepX, bottom - 1); ctx.stroke();
+  ctx.restore();
+
+  const rangeKm = Math.round(CONFIG.ranges[state.rangeIndex] / 1000);
+  const modeText = !state.radarOn ? "OFF" : (state.lockedId != null
+    ? (state.lockState === "tracking" ? "TRK " : "LCK ") + currentMode()
+    : currentMode());
+  drawText(modeText, cx, rect.y + 5, C.green, 14, "center");
+  drawText(rangeKm + " km", plot.x + plot.w - 58, rect.y + 5, C.green, 13);
+
+  if (!state.radarOn) {
+    drawText("RADAR OFF", cx, rect.y + rect.h / 2 - 8, C.greenDim, 18, "center");
+    drawControlButtons(rect);
+    return;
+  }
+
+  drawElevationScale(rect, bottom);
+  if (currentMode() === "ACM") drawText("SCAN FIXED", plot.x + 4, rect.y + 22, C.greenDim, 10);
+
+  if (bandW > 96) {
+    drawText("0 km", band.x1 - 96, bottom - 18, C.green, 12);
+    drawText(band.half + "°", band.x0 + 4, rect.y + rect.h / 2 - 8, C.green, 12);
+    drawText(band.half + "°", band.x1 - 30, rect.y + rect.h / 2 - 8, C.green, 12);
+  }
+
+  drawOwnShip(cx, bottom - 11);
+
+  const mode = currentMode();
+  for (const target of targets) {
+    if (radarUiCleared()) break;
+    if (!contactVisible(target)) continue;
+    const p = targetBlip(target, rect);
+    if (p.x < rect.x + 3 || p.x > rect.x + rect.w - 3 || p.y < rect.y + 12 || p.y > bottom - 3) continue;
+    const isLocked = state.lockedId === target.id;
+    ctx.save();
+    ctx.shadowColor = isLocked ? "rgba(160,255,160,0.95)" : "rgba(107,255,107,0.9)";
+    ctx.shadowBlur = isLocked ? 10 : 7;
+    drawCircle(p.x, p.y, 4, C.green, 1.5);
+    ctx.fillStyle = C.green;
+    ctx.fillRect(p.x - 1, p.y - 1, 3, 3);
+    ctx.restore();
+    state.hitBlips.push({ id: target.id, x: p.x, y: p.y });
+  }
+
+  if (state.seekerInertialPoint) {
+    const p = state.seekerInertialPoint;
+    if (p.x > rect.x + 3 && p.x < rect.x + rect.w - 3 &&
+        p.y > rect.y + 12 && p.y < bottom - 3) {
+      drawCircle(p.x, p.y, 5, C.green, 1.5);
+    }
+  }
+
+  drawGuidanceLine(rect);
+  drawLaunchAssessment(rect);
+
+  const sx = rect.x + state.strobe.x;
+  const sy = rect.y + state.strobe.y;
+  ctx.save();
+  ctx.strokeStyle = "rgba(232,255,232,0.85)";
+  ctx.lineWidth = 1;
+  ctx.shadowColor = "rgba(160,255,160,0.7)";
+  ctx.shadowBlur = 4;
+  ctx.beginPath();
+  ctx.moveTo(sx - 9, sy); ctx.lineTo(sx + 9, sy);
+  ctx.moveTo(sx, sy - 9); ctx.lineTo(sx, sy + 9);
+  ctx.stroke();
+  drawCircle(sx, sy, 13, "rgba(232,255,232,0.35)", 1);
+  ctx.restore();
+
+  drawControlButtons(rect);
+}
+
+function iconButton(x, y, w, h, keyLabel, iconFn, active, action, labelSide) {
+  ctx.fillStyle = "rgba(0,35,0,0.85)";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = active ? C.green : C.greenDim;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2 + 2);
+  iconFn(ctx);
+  ctx.restore();
+  if (keyLabel && state.panelDisplay === 0) {
+    if (labelSide === "left") {
+      drawText(keyLabel, x - 7, y + h / 2 - 5, C.green, 10, "right");
+    } else {
+      drawText(keyLabel, x + w / 2, y - 13, C.green, 10, "center");
+    }
+  }
+  state.hitButtons.push({ x, y, w, h, action });
+}
+
+function drawControlButtons(rect) {
+  state.hitButtons = [];
+  if (state.panelDisplay === 2) return;
+  const bw = 52, bh = 40, gap = 4;
+  const leftX = rect.x - bw - 8;
+  const icons = [
+    { key: "", fn: iconWifi, action: "noop" },
+    { key: "D", fn: iconCone, action: "scanRange" },
+    { key: "W", fn: iconWave, action: "acm" },
+    { key: "B", fn: iconMagnifier, action: "mode" }
+  ];
+  icons.forEach((b, i) => iconButton(leftX, rect.y + i * (bh + gap), bw, bh, state.panelDisplay === 0 ? b.key : "", b.fn, false, b.action, "left"));
+
+  const bottomY = rect.y + rect.h + 16;
+  const bbw = 46;
+  const bottom = [
+    { key: "←", fn: iconLeft, action: "azLeft" },
+    { key: "→", fn: iconRight, action: "azRight" },
+    { key: "↑", fn: iconClimb, action: "elUp" },
+    { key: "↓", fn: iconDive, action: "elDown" },
+    { key: "E", fn: iconRecenter, action: "recenter" },
+    { key: "Q", fn: iconScale, action: "scale" },
+    { key: "R", fn: iconPower, action: "power" }
+  ];
+  const total = bottom.length * bbw + (bottom.length - 1) * gap;
+  const startX = rect.x + (rect.w - total) / 2;
+  bottom.forEach((b, i) => iconButton(startX + i * (bbw + gap), bottomY, bbw, bh, state.panelDisplay === 0 ? b.key : "", b.fn, (state.buttonHold && state.buttonHold.action === b.action) || (b.action === "power" && state.radarOn), b.action));
+}
+
+function inLaunchEnvelope(t, range) {
+  if (!t || state.lockState !== "tracking") return false;
+  const perf = activeMissileProfile();
+  if (range > perf.maxEffectiveRange) return false;
+  if (activeQuality(t) < 0.2) return false;
+  const gimbal = CONFIG.seeker.gimbalDeg;
+  if (Math.abs(t.az) > gimbal || Math.abs(t.el) > gimbal) return false;
+  return true;
+}
+
+function drawLockLayer(pos, t, range) {
+  const stage = state.seeker;
+  const inEnv = inLaunchEnvelope(t, range);
+  const established = stage === "TRACKING" || stage === "HIGH";
+  const red = established && inEnv;
+  const color = red ? C.red : C.white;
+  const track = red ? "rgba(255,85,85,0.22)" : "rgba(232,255,232,0.22)";
+  drawCircle(pos.x, pos.y, 30, color, 2);
+  if (stage === "ACQUIRING") {
+    drawCircle(pos.x, pos.y, 34, track, 3);
+    drawArc(pos.x, pos.y, 34, -Math.PI / 2, -Math.PI / 2 + state.progress * Math.PI * 2, color, 3);
+  } else if (stage === "TRACKING") {
+    const p = clamp(state.trackTime / CONFIG.seeker.highConfidenceSeconds, 0, 1);
+    drawCircle(pos.x, pos.y, 34, track, 3);
+    drawArc(pos.x, pos.y, 34, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2, color, 3);
+  } else if (stage === "HIGH") {
+    drawCircle(pos.x, pos.y, 34, color, 3);
+  }
+}
+
+function drawGuidanceLine(rect) {
+  if (!state.missileActive) return;
+  const target = targets.find(t => t.id === state.missileTargetId);
+  let end = state.seekerInertialPoint;
+  if (!end && target) end = targetBlip(target, rect);
+  if (!end && state.missileLastPanel) end = state.missileLastPanel;
+  if (!end) return;
+  const bottom = rect.y + rect.h;
+  const x1 = rect.x + rect.w / 2;
+  const y1 = rect.y + rect.h / 2;
+  const x2 = clamp(end.x, rect.x + 3, rect.x + rect.w - 4);
+  const y2 = clamp(end.y, rect.y + 12, bottom - 4);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(107,255,107,0.55)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (state.missileLaunchProfile === "ARH" && target) {
+    const pitbull = (MISSILE_PROFILES.ARH.pitbullRange || 0);
+    if (pitbull > 0 && target.range > 0) {
+      const ratio = Math.min(1, pitbull / target.range);
+      const mx = x1 + (x2 - x1) * ratio;
+      const my = y1 + (y2 - y1) * ratio;
+      ctx.strokeStyle = C.amber;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(mx - 5, my);
+      ctx.lineTo(mx + 5, my);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawLaunchAssessment(rect) {
+  if (!state.radarOn || !state.seekerOn) return;
+  const t = activeTarget();
+  if (!t) return;
+  let targetRange = t.range;
+  if (currentMode() === "TWS" && state.twsTrack && state.twsTrack.id === t.id) {
+    targetRange = twsPredicted(state.twsTrack).range;
+  }
+  const plot = radarPlot(rect);
+  const scale = CONFIG.ranges[state.rangeIndex];
+  const yFor = r => plot.y + plot.h - clamp(r / scale, 0, 1) * plot.h;
+  const xR = plot.x + plot.w - 4;
+  const lineRight = xR - 2;
+  const perf = activeMissileProfile();
+  const maxRange = perf.maxEffectiveRange;
+  const inRange = targetRange <= maxRange;
+  const targetColor = inRange ? C.green : C.amber;
+  const yMax = yFor(maxRange);
+  const yTarget = yFor(targetRange);
+  const yNezTop = yFor(perf.noEscapeMax);
+  const yNezBottom = yFor(perf.noEscapeMin);
+  const yMinManeuver = yFor(perf.minManeuverRange);
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = targetColor;
+  ctx.beginPath();
+  ctx.moveTo(lineRight - 80, yTarget);
+  ctx.lineTo(lineRight, yTarget);
+  ctx.stroke();
+  ctx.strokeStyle = C.green;
+  ctx.beginPath();
+  ctx.moveTo(lineRight - 44, yMax);
+  ctx.lineTo(lineRight, yMax);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(107,255,107,0.85)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(lineRight, yNezTop);
+  ctx.lineTo(lineRight, yNezBottom);
+  ctx.moveTo(lineRight, yNezTop);
+  ctx.lineTo(lineRight - 22, yNezTop);
+  ctx.moveTo(lineRight, yNezBottom);
+  ctx.lineTo(lineRight - 22, yNezBottom);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(107,255,107,0.85)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(lineRight - 30, yMinManeuver);
+  ctx.lineTo(lineRight, yMinManeuver);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTwsTracksOverlay() {
+  if (!state.radarOn || currentMode() !== "TWS" || state.lockedId != null || radarUiCleared()) return;
+  const tr = state.twsTrack;
+  if (!tr || state.time - tr.lastMeasured > TWS_INERTIAL_TIMEOUT) return;
+  const pred = twsPredicted(tr);
+  const pos = targetScreen(pred);
+  drawCornerBox(pos.x, pos.y, 30, 10, C.green, 1.5, 0.8);
+  drawText(targetDataLine(tr), pos.x, pos.y - 70, C.green, 12, "center");
+  drawText((pred.range / 1000).toFixed(1) + " km", pos.x, pos.y + 48, C.green, 12, "center");
+  if (state.time - tr.lastMeasured > 1.2) {
+    drawText("INER", pos.x, pos.y - 84, C.amber, 9, "center");
+  }
+}
+
+function drawLaunchPromptLine() {
+  if (!state.radarOn || !canLaunchNow()) return;
+  const t = activeTarget();
+  if (!t) return;
+  let range = t.range;
+  let pos = targetScreen(t);
+  if (currentMode() === "TWS" && state.twsTrack && state.twsTrack.id === t.id) {
+    const pred = twsPredicted(state.twsTrack);
+    pos = targetScreen(pred);
+    range = pred.range;
+  }
+  if (range > activeMissileProfile().maxEffectiveRange) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(107,255,107,0.65)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(pos.x, 0);
+  ctx.lineTo(pos.x, CONFIG.H);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(107,255,107,0.9)";
+  ctx.beginPath();
+  ctx.moveTo(pos.x, pos.y + 96);
+  ctx.lineTo(pos.x - 7, pos.y + 108);
+  ctx.lineTo(pos.x + 7, pos.y + 108);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCenterRings() {
+  const cx = CONFIG.W / 2, cy = CONFIG.H / 2;
+  const outerR = ringRadius(CONFIG.seeker.hudGimbalDeg);
+  const innerR = ringRadius(CONFIG.seeker.hudFovDeg);
+
+  if (!state.radarOn && !state.irMode) return;
+
+  if (state.irMode) {
+    const t = nearestBoresight();
+    if (state.irSeekerOn) {
+      drawCircle(cx, cy, outerR, "rgba(232,255,232,0.85)", 1.5);
+      const pos = t ? targetScreen(t) : { x: cx, y: cy };
+      drawCircle(pos.x, pos.y, innerR, C.green, 2);
+      if (t) {
+        drawLockReticle(pos.x, pos.y, C.red, false);
+        drawTargetBox(pos.x, pos.y, 22, C.red);
+        drawText(targetDataLine(t), pos.x, pos.y - 54, C.green, 14, "center");
+        drawText((t.range / 1000).toFixed(1) + " km", pos.x, pos.y + 40, C.green, 14, "center");
+        drawText(Math.round(t.closure) + " m/s", pos.x, pos.y + 58, C.green, 14, "center");
+      }
+    }
+    const status = !state.irSeekerOn ? "导引头: 待机" : (t ? "导引头: 正在追踪" : "导引头: 正在搜寻目标");
+    drawText(status, cx, CONFIG.H - 116, C.green, 16, "center");
+    return;
+  }
+
+  const t = lockedTarget();
+  if (!t) {
+    if (state.fired) drawText("导弹已发射", cx, CONFIG.H - 116, C.green, 16, "center");
+    else if (state.seekerOn) drawText("导引头: 开启（搜索中）", cx, CONFIG.H - 116, C.green, 16, "center");
+    return;
+  }
+  let pos = targetScreen(t);
+  let displayRange = t.range;
+  let data = t;
+  if (currentMode() === "TWS" && state.twsTrack && state.twsTrack.id === t.id) {
+    const pred = twsPredicted(state.twsTrack);
+    pos = targetScreen(pred);
+    displayRange = pred.range;
+    data = state.twsTrack;
+  }
+
+  if (state.lockState === "tracking") {
+    drawTargetBox(pos.x, pos.y, 30, C.green);
+  } else if (state.lockState === "acquiring") {
+    const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(state.time * 9));
+    drawCornerBox(pos.x, pos.y, 70, 20, C.green, 2.5, pulse);
+  }
+  if (state.seekerOn && !state.fired) {
+    drawLockLayer({ x: state.seekerRing.x, y: state.seekerRing.y }, t, displayRange);
+  }
+  drawText(targetDataLine(data), pos.x, pos.y - 84, C.green, 15, "center");
+  drawText((displayRange / 1000).toFixed(1) + " km", pos.x, pos.y + 70, C.green, 15, "center");
+  drawText(Math.round(t.closure) + " m/s", pos.x, pos.y + 88, C.green, 15, "center");
+
+  const inEnv = inLaunchEnvelope(t, displayRange);
+  const stablePct = Math.round(clamp(state.trackTime / CONFIG.seeker.highConfidenceSeconds, 0, 1) * 100);
+  const acquirePct = Math.round(state.progress * 100);
+  let status;
+  if (state.fired) {
+    status = "导弹已发射";
+  } else if (!state.seekerOn) {
+    status = "导引头: 关闭（Alt+X / Ctrl+Alt 开启）";
+  } else if (!state.seekerRing.aligned) {
+    status = "导引头: 对准目标中" + (sarhSingleWhite() ? "（SARH 禁止发射）" : "");
+  } else if (sarhSingleWhite()) {
+    status = "导引头: 搜索中（白圈 · SARH 禁止发射）";
+  } else if (state.seeker === "ACQUIRING") {
+    status = "导引头: 锁定建立 " + acquirePct + "%";
+  } else if (!inEnv) {
+    status = {
+      SEARCHING: "导引头: 搜索中（白圈）",
+      TRACKING: "导引头: 锁定建立 " + stablePct + "%",
+      HIGH: "导引头: 跟踪稳定（未进入包线）"
+    }[state.seeker];
+  } else {
+    status = {
+      SEARCHING: "导引头: 搜索中（白圈）",
+      TRACKING: "导引头: 跟踪稳定环 " + stablePct + "%",
+      HIGH: "导引头: 高置信锁定（可发射）"
+    }[state.seeker];
+  }
+  drawText(status, cx, CONFIG.H - 116, C.green, 16, "center");
+}
+
+function drawMissileOutcome() {
+  if (state.time - state.missileOutcomeTime > 2.5) return;
+  const hit = state.missileOutcome === "导弹命中";
+  drawText(state.missileOutcome, CONFIG.W / 2, CONFIG.H - 142,
+    hit ? C.green : C.amber, 16, "center");
+}
+
+function drawLaunchEffect() {
+  if (!state.fired) return;
+  const t = activeTarget();
+  if (!t) return;
+  const elapsed = state.time - state.fireTime;
+  if (elapsed < 0) return;
+  const target = targetScreen(t);
+  const sx = CONFIG.W / 2;
+  const sy = CONFIG.H - 170;
+  if (elapsed < 1.0) {
+    const k = elapsed / 1.0;
+    const x = sx + (target.x - sx) * k;
+    const y = sy + (target.y - sy) * k;
+    ctx.save();
+    ctx.strokeStyle = "rgba(200,255,200,0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle = C.white;
+    ctx.shadowColor = "rgba(160,255,160,0.9)";
+    ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (elapsed < 1.6) {
+    const a = 1 - (elapsed - 1.0) / 0.6;
+    drawCircle(target.x, target.y, 22 + (elapsed - 1.0) * 120, "rgba(232,255,232," + (a * 0.8) + ")", 3);
+  }
+  if (elapsed < 2.2) {
+    drawText("MISSILE AWAY", CONFIG.W / 2, CONFIG.H - 142, C.green, 16, "center");
+  }
+}
+
+function drawWeaponBar() {
+  const slots = [
+    { key: "", label: "武器", icon: iconWeapon },
+    { key: "Alt+F", label: "尝试锁定", icon: iconLock },
+    { key: "R", label: "雷达开关", icon: iconRadar },
+    { key: "Alt+T", label: "选目标", icon: iconSelect },
+    { key: "CapsLock", label: "挂架", icon: iconRack }
+  ];
+  const size = 46, gap = 6;
+  const total = slots.length * size + (slots.length - 1) * gap;
+  const x0 = (CONFIG.W - total) / 2;
+  const y0 = CONFIG.H - 62;
+  slots.forEach((s, i) => {
+    const x = x0 + i * (size + gap);
+    ctx.fillStyle = "rgba(0,35,0,0.85)";
+    ctx.fillRect(x, y0, size, size);
+    ctx.strokeStyle = C.greenDim;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y0, size, size);
+    ctx.save();
+    ctx.translate(x + size / 2, y0 + size / 2);
+    s.icon(ctx);
+    ctx.restore();
+    drawText(s.key, x + size / 2, y0 - 14, C.green, 10, "center");
+  });
+}
+
+function drawRack() {
+  if (!state.rackOpen) return;
+  const cols = 9, rows = 4, slot = 46, gap = 4, pad = 18;
+  const w = cols * slot + (cols - 1) * gap + pad * 2;
+  const h = rows * slot + (rows - 1) * gap + pad * 2 + 20;
+  const x0 = (CONFIG.W - w) / 2;
+  const y0 = (CONFIG.H - h) / 2;
+
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.H);
+  ctx.fillStyle = "rgba(0,20,0,0.92)";
+  ctx.fillRect(x0, y0, w, h);
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x0, y0, w, h);
+
+  drawText("挂架选择", x0 + pad, y0 + 6, C.green, 16);
+  drawText("数字 1-9 / 点击选择 · CapsLock 或点面板外关闭", x0 + pad, y0 + h - 18, C.greenDim, 12);
+
+  state.hitRack = [];
+  for (let i = 0; i < 36; i++) {
+    const row = i < 9 ? 3 : Math.floor((i - 9) / 9);
+    const col = i < 9 ? i : (i - 9) % 9;
+    const sx = x0 + pad + col * (slot + gap);
+    const sy = y0 + pad + 16 + row * (slot + gap);
+    const item = rackSlots[i];
+
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.fillRect(sx, sy, slot, slot);
+    ctx.strokeStyle = "rgba(120,160,120,0.35)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx, sy, slot, slot);
+
+    if (item) {
+      drawItemIcon(sx, sy, slot, item);
+      if (!item.ok) {
+        ctx.fillStyle = "rgba(0,0,0,0.62)";
+        ctx.fillRect(sx, sy, slot, slot);
+      }
+      if (state.rackSelected === i) {
+        ctx.strokeStyle = C.gold;
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(sx - 1, sy - 1, slot + 2, slot + 2);
+      } else if (state.rackHover === i) {
+        ctx.strokeStyle = "rgba(255,255,255,0.7)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx - 1, sy - 1, slot + 2, slot + 2);
+      }
+    }
+
+    if (i < 9) {
+      drawText(String(i + 1), sx + slot / 2, sy + slot + 2, C.greenDim, 10, "center");
+    }
+    state.hitRack.push({ index: i, x: sx, y: sy, w: slot, h: slot, ok: !!item && item.ok });
+  }
+}
+
+function drawItemIcon(x, y, size, item) {
+  const cx = x + size / 2, cy = y + size / 2;
+  if (item.kind === "missile") {
+    ctx.fillStyle = "#9fd0ff";
+    ctx.fillRect(cx - 3, cy - 12, 6, 20);
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, cy - 12); ctx.lineTo(cx, cy - 18); ctx.lineTo(cx + 3, cy - 12);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#ff9a4a";
+    ctx.fillRect(cx - 2, cy + 8, 4, 4);
+    drawText(item.label, cx, cy + 12, C.green, 9, "center");
+  } else if (item.kind === "tnt") {
+    ctx.fillStyle = "#c33";
+    ctx.fillRect(cx - 13, cy - 10, 26, 20);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - 8, cy - 3, 16, 6);
+    drawText("TNT", cx, cy + 13, C.green, 9, "center");
+  } else if (item.kind === "arrow") {
+    ctx.strokeStyle = "#cfc";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx - 12, cy + 10); ctx.lineTo(cx + 10, cy - 10); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + 10, cy - 10); ctx.lineTo(cx + 3, cy - 9); ctx.lineTo(cx + 9, cy - 3);
+    ctx.closePath(); ctx.stroke();
+    drawText("箭", cx, cy + 13, C.green, 9, "center");
+  } else if (item.kind === "firework") {
+    ctx.strokeStyle = "#ffd36a";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5);
+      ctx.lineTo(cx + Math.cos(a) * 13, cy + Math.sin(a) * 13);
+      ctx.stroke();
+    }
+    drawText("烟花", cx, cy + 13, C.green, 9, "center");
+  } else {
+    ctx.fillStyle = "#7a8a7a";
+    ctx.fillRect(cx - 11, cy - 11, 22, 22);
+    drawText(item.label, cx, cy - 5, "#dfe", 8, "center");
+  }
+}
+
+function drawHint() {
+  const lines = [
+    "B 模式 · R 雷达 · Q 距离 · D 扫描宽 · ←→ 方位 · ↑↓ 俯仰 · E 复位",
+    "Alt+F 锁定/解锁 · Alt+T 选目标 · X 解锁 · Alt+X 导引头 · Ctrl+Alt 发射",
+    "I 红外 · CapsLock 挂架 · M 按钮 · H 帮助 · 双击光点锁定"
+  ];
+  lines.forEach((l, i) => drawText(l, 24, CONFIG.H - 86 + i * 18, "rgba(150,230,150,0.85)", 12));
+}
+
+function drawHelp() {
+  if (!state.helpOpen) return;
+  ctx.fillStyle = "rgba(0,8,0,0.78)";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.H);
+  const rows = [
+    ["B", "雷达模式循环：SRC → SRC PD → TWS"],
+    ["R", "雷达开关"],
+    ["Q", "距离档位"],
+    ["D", "扫描宽度 ±60 / ±30 / ±15（面板扫描条）"],
+    ["← →", "方位左右 1°/次（长按连续；可拖拽扫描条）"],
+    ["↑ ↓", "俯仰上下 1°/次（长按连续）"],
+    ["E", "扫描中心复位"],
+    ["W", "格斗模式 ACM 切换"],
+    ["Alt+F", "锁定 / 取消锁定（切换）"],
+    ["Alt+X", "单独开关导引头"],
+    ["Ctrl+Alt", "发射导弹（未开导引头时第一次开启，第二次发射）"],
+    ["稳定环", "白=截获/锁定建立；红=进入包线；SARH 单白圈禁止发射"],
+    ["Alt+T", "选择 / 切换扫描光标目标"],
+    ["X", "解除锁定"],
+    ["I", "红外弹模式 / 红外导引头开关"],
+    ["CapsLock", "挂架选择（Esc 关闭）"],
+    ["M", "按钮显示模式"],
+    ["1-4", "导引头状态预览"],
+    ["H", "显示 / 隐藏按键帮助"],
+    ["双击", "锁定 / 解锁面板光点"],
+    ["Alt", "Alt+B / Alt+D / Alt+W / Alt+Q / Alt+R 兼容组合键"]
+  ];
+  const w = 700, rowH = 30;
+  const h = rows.length * rowH + 92;
+  const x = (CONFIG.W - w) / 2, y = (CONFIG.H - h) / 2;
+  ctx.fillStyle = "rgba(0,30,2,0.96)";
+  ctx.fillRect(x, y, w, h);
+  ctx.save();
+  ctx.shadowColor = "rgba(107,255,107,0.8)";
+  ctx.shadowBlur = 14;
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+  drawText("MineThunder 雷达 Demo · 按键帮助", x + 28, y + 18, C.green, 18);
+  drawText("H / Esc 关闭", x + w - 28, y + 22, C.greenDim, 12, "right");
+  rows.forEach((r, i) => {
+    drawText(r[0], x + 28, y + 62 + i * rowH, C.amber, 15);
+    drawText(r[1], x + 130, y + 62 + i * rowH, C.white, 15);
+  });
+}
+
+function iconWifi(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  for (let r = 6; r <= 14; r += 4) {
+    c.beginPath(); c.arc(0, 6, r, -Math.PI * 0.75, -Math.PI * 0.25); c.stroke();
+  }
+  c.fillStyle = C.green;
+  c.beginPath(); c.arc(0, 8, 2, 0, Math.PI * 2); c.fill();
+}
+function iconCone(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(-10, -8); c.lineTo(10, -8); c.lineTo(0, 10); c.closePath(); c.stroke();
+  c.setLineDash([3, 3]);
+  c.beginPath(); c.moveTo(-10, -8); c.lineTo(10, -8); c.stroke();
+  c.setLineDash([]);
+}
+function iconWave(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.arc(-4, 6, 8, -Math.PI * 0.6, -Math.PI * 0.1); c.stroke();
+  c.beginPath(); c.arc(-4, 6, 14, -Math.PI * 0.6, -Math.PI * 0.1); c.stroke();
+  c.fillStyle = C.green;
+  c.beginPath(); c.arc(-4, 6, 2, 0, Math.PI * 2); c.fill();
+}
+function iconMagnifier(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.arc(-2, -2, 8, 0, Math.PI * 2); c.stroke();
+  c.beginPath(); c.moveTo(4, 4); c.lineTo(11, 11); c.stroke();
+  c.beginPath(); c.moveTo(-6, -2); c.lineTo(2, -2); c.moveTo(-2, -6); c.lineTo(-2, 2); c.stroke();
+}
+function iconBar(c) {
+  c.strokeStyle = C.green; c.lineWidth = 3;
+  c.beginPath(); c.moveTo(-11, 2); c.lineTo(11, 2); c.stroke();
+}
+function iconLeft(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(8, -9); c.lineTo(8, 9); c.stroke();
+  c.beginPath(); c.moveTo(8, 0); c.lineTo(-9, 0); c.stroke();
+  c.beginPath(); c.moveTo(-9, 0); c.lineTo(-2, -6); c.moveTo(-9, 0); c.lineTo(-2, 6); c.stroke();
+}
+function iconRight(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(-8, -9); c.lineTo(-8, 9); c.stroke();
+  c.beginPath(); c.moveTo(-8, 0); c.lineTo(9, 0); c.stroke();
+  c.beginPath(); c.moveTo(9, 0); c.lineTo(2, -6); c.moveTo(9, 0); c.lineTo(2, 6); c.stroke();
+}
+function iconClimb(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(0, 10); c.lineTo(0, -8); c.stroke();
+  c.beginPath(); c.moveTo(0, -8); c.lineTo(-6, 0); c.moveTo(0, -8); c.lineTo(6, 0); c.stroke();
+  c.beginPath(); c.moveTo(-10, 6); c.lineTo(-4, 6); c.moveTo(10, 6); c.lineTo(4, 6); c.stroke();
+}
+function iconDive(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(0, -10); c.lineTo(0, 8); c.stroke();
+  c.beginPath(); c.moveTo(0, 8); c.lineTo(-6, 0); c.moveTo(0, 8); c.lineTo(6, 0); c.stroke();
+  c.beginPath(); c.moveTo(-10, -6); c.lineTo(-4, -6); c.moveTo(10, -6); c.lineTo(4, -6); c.stroke();
+}
+function iconRecenter(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(0, -10); c.lineTo(0, 10); c.stroke();
+  c.beginPath(); c.moveTo(-12, 0); c.lineTo(-4, 0); c.moveTo(-4, 0); c.lineTo(-7, -3); c.moveTo(-4, 0); c.lineTo(-7, 3); c.stroke();
+  c.beginPath(); c.moveTo(12, 0); c.lineTo(4, 0); c.moveTo(4, 0); c.lineTo(7, -3); c.moveTo(4, 0); c.lineTo(7, 3); c.stroke();
+}
+function iconScale(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(-9, 9); c.lineTo(9, -9); c.stroke();
+  c.beginPath(); c.moveTo(9, -9); c.lineTo(2, -9); c.moveTo(9, -9); c.lineTo(9, -2); c.stroke();
+  c.beginPath(); c.moveTo(-9, 9); c.lineTo(-2, 9); c.moveTo(-9, 9); c.lineTo(-9, 2); c.stroke();
+}
+function iconPower(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.arc(0, 2, 9, -Math.PI * 0.35, Math.PI * 1.35); c.stroke();
+  c.beginPath(); c.moveTo(0, -10); c.lineTo(0, 2); c.stroke();
+}
+function iconWeapon(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(-11, 8); c.lineTo(8, -8); c.stroke();
+  c.beginPath(); c.moveTo(8, -8); c.lineTo(2, -7); c.moveTo(8, -8); c.lineTo(7, -2); c.stroke();
+}
+function iconLock(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.strokeRect(-7, -1, 14, 11);
+  c.beginPath(); c.arc(0, -1, 5, Math.PI, Math.PI * 2); c.stroke();
+}
+function iconRadar(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.beginPath(); c.arc(0, 3, 10, Math.PI, Math.PI * 2); c.stroke();
+  c.beginPath(); c.moveTo(0, 3); c.lineTo(7, -5); c.stroke();
+}
+function iconSelect(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.strokeRect(-9, -9, 18, 18);
+  c.beginPath(); c.moveTo(-2, -6); c.lineTo(6, 0); c.lineTo(-2, 6); c.closePath(); c.stroke();
+}
+function iconRack(c) {
+  c.strokeStyle = C.green; c.lineWidth = 2;
+  c.strokeRect(-10, -6, 20, 12);
+  c.beginPath(); c.moveTo(-10, 0); c.lineTo(10, 0); c.stroke();
+}
+
+function toLogical(e) {
+  const r = cv.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) / r.width * CONFIG.W,
+    y: (e.clientY - r.top) / r.height * CONFIG.H
+  };
+}
+
+function inside(b, p) {
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+}
+
+function panelPoint(p) {
+  const rect = panelRect();
+  return { x: clamp(p.x - rect.x, 0, rect.w), y: clamp(p.y - rect.y, 0, rect.h) };
+}
+
+function isMoveAction(action) {
+  return action === "azLeft" || action === "azRight" || action === "elUp" || action === "elDown";
+}
+
+function updateMissile(dt) {
+  if (state.missileActive) {
+    const target = targets.find(t => t.id === state.missileTargetId);
+    const twsHeld = currentMode() === "TWS" && state.twsTrack &&
+      state.twsTrack.id === state.missileTargetId;
+    const lockHeld = state.lockedId === state.missileTargetId || twsHeld;
+    const painted = target && contactVisible(target);
+    if (lockHeld && painted) {
+      const p = targetBlip(target, panelRect());
+      state.missileLastPanel = { x: p.x, y: p.y };
+      state.seekerInertialPoint = null;
+    } else if (state.missileLastPanel && !state.seekerInertialPoint) {
+      state.seekerInertialPoint = { x: state.missileLastPanel.x, y: state.missileLastPanel.y };
+    }
+    if (state.time >= state.missileEndTime) {
+      const sarh = state.missileLaunchProfile === "SARH";
+      const hit = target && (sarh ? lockHeld : (lockHeld || painted));
+      state.missileActive = false;
+      state.fired = false;
+      state.seekerInertialPoint = null;
+      state.missileOutcome = hit ? "导弹命中" : "导弹自爆";
+      state.missileOutcomeTime = state.time;
+    }
+  } else {
+    const lt = lockedTarget();
+    if (state.seekerOn && lt && state.time - seenAt(lt) > 1.2) {
+      if (!state.seekerInertialPoint) {
+        const p = targetBlip(lt, panelRect());
+        state.seekerInertialPoint = { x: p.x, y: p.y };
+      }
+    } else {
+      state.seekerInertialPoint = null;
+    }
+  }
+}
+
+function updateButtonHold(dt) {
+  if (!state.buttonHold || state.helpOpen || state.rackOpen) return;
+  if (state.time - state.buttonHold.t < 0.5) return;
+  state.buttonHold.acc += dt;
+  while (state.buttonHold.acc >= 0.05) {
+    doAction(state.buttonHold.action);
+    state.buttonHold.acc -= 0.05;
+  }
+}
+
+function doAction(action) {
+  if (isMoveAction(action) && currentMode() === "ACM") return;
+  if (action === "mode") {
+    const cycle = [0, 1, 2];
+    const idx = cycle.indexOf(state.modeIndex);
+    state.modeIndex = cycle[(idx + 1) % cycle.length];
+    state.twsTrack = null;
+    state.twsHold = false;
+    if (currentMode() === "TWS") {
+      state.lockedId = null;
+      state.lockState = "none";
+      state.lockProgress = 0;
+      state.fired = false;
+      state.fireTime = -99;
+      state.seekerOn = false;
+      state.seeker = "SEARCHING";
+      state.progress = 0;
+      state.trackTime = 0;
+      targets.forEach(t => { t.lastSeen = -999; t.wasPainted = false; });
+    }
+    if (currentMode() === "ACM") {
+      state.scanAz = 0;
+      state.scanEl = 0;
+      clearLock();
+      state.acmUnlockAt = state.time;
+    }
+    clampScan();
+  }
+  else if (action === "scanRange") { state.scanIndex = (state.scanIndex + 1) % CONFIG.scans.length; clampScan(); }
+  else if (action === "azLeft") { state.scanAz -= 1; clampScan(); }
+  else if (action === "azRight") { state.scanAz += 1; clampScan(); }
+  else if (action === "elUp") { state.scanEl += 1; clampScan(); }
+  else if (action === "elDown") { state.scanEl -= 1; clampScan(); }
+  else if (action === "acm") toggleAcm();
+  else if (action === "scale") state.rangeIndex = (state.rangeIndex + 1) % CONFIG.ranges.length;
+  else if (action === "power") state.radarOn = !state.radarOn;
+  else if (action === "recenter") {
+    state.scanAz = 0;
+    state.scanEl = 0;
+    state.strobe = { x: CONFIG.panel.size / 2, y: CONFIG.panel.size / 2 };
+  }
+  else if (action === "lock") toggleLock();
+  else if (action === "select") selectNextTarget();
+  else if (action === "seeker") toggleSeeker();
+}
+
+cv.addEventListener("mousemove", e => {
+  const p = toLogical(e);
+  state.mouse.x = p.x; state.mouse.y = p.y;
+  if (state.dragMode === "scan" && state.mouse.down && state.dragScan) {
+    const plot = radarPlot(panelRect());
+    const degPerPx = 120 / plot.w;
+    state.scanAz = state.dragScan.startAz + (p.x - state.dragScan.startX) * degPerPx;
+    clampScan();
+  } else if (state.mouse.dragging) {
+    state.strobe = panelPoint(p);
+  }
+  if (state.rackOpen) {
+    state.rackHover = -1;
+    for (const b of state.hitRack) if (inside(b, p)) state.rackHover = b.index;
+  }
+});
+
+cv.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  const p = toLogical(e);
+  state.mouse.down = true;
+
+  if (state.rackOpen) {
+    let handled = false;
+    for (const b of state.hitRack) {
+      if (inside(b, p)) {
+        if (b.ok) selectRackSlot(b.index);
+        handled = true;
+        break;
+      }
+    }
+    if (!handled) {
+      const rect = panelRect();
+      void rect;
+      state.rackOpen = false;
+    }
+    return;
+  }
+
+  for (const b of state.hitButtons) {
+    if (inside(b, p)) {
+      doAction(b.action);
+      if (isMoveAction(b.action)) state.buttonHold = { action: b.action, t: state.time, acc: 0 };
+      return;
+    }
+  }
+
+  const rect = panelRect();
+  if (p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h) {
+    const now = performance.now();
+    let hit = null;
+    for (const b of state.hitBlips) {
+      if (Math.hypot(b.x - p.x, b.y - p.y) < 14) { hit = b; break; }
+    }
+    if (hit) {
+      state.dragMode = null;
+      if (now - state.lastClick.t < 350 && state.lastClick.id === hit.id) {
+        attemptLockOnId(hit.id);
+        state.lastClick = { t: 0, id: null };
+      } else {
+        state.lastClick = { t: now, id: hit.id };
+        state.strobe = panelPoint(p);
+      }
+    } else {
+      const band = scanBand(rect);
+      const plot = radarPlot(rect);
+      const bandW = band.x1 - band.x0;
+      const canScanDrag = currentMode() !== "ACM" && bandW < plot.w - 6 && p.x >= band.x0 - 4 && p.x <= band.x1 + 4;
+      if (canScanDrag) {
+        state.dragMode = "scan";
+        state.dragScan = { startX: p.x, startAz: state.scanAz };
+        state.mouse.dragging = false;
+      } else {
+        if (now - state.lastClick.t < 350 && state.lastClick.id == null) {
+          if (state.lockedId != null) clearLock();
+        } else {
+          state.lastClick = { t: now, id: null };
+        }
+        state.strobe = panelPoint(p);
+        state.mouse.dragging = true;
+        state.dragMode = "strobe";
+      }
+    }
+  }
+});
+
+cv.addEventListener("mouseup", () => {
+  state.mouse.down = false;
+  state.mouse.dragging = false;
+  state.dragMode = null;
+  state.dragScan = null;
+  state.buttonHold = null;
+});
+
+window.addEventListener("mouseup", () => {
+  state.mouse.down = false;
+  state.mouse.dragging = false;
+  state.dragMode = null;
+  state.dragScan = null;
+  state.buttonHold = null;
+});
+
+window.addEventListener("keydown", e => {
+  if (e.key === "Alt") state.altHeld = true;
+
+  if (e.altKey && e.ctrlKey && !e.metaKey) {
+    if (!state.helpOpen && !state.rackOpen) lockOrFire();
+    e.preventDefault();
+    return;
+  }
+
+  if (e.metaKey || e.ctrlKey) return;
+
+  if (e.code === "Escape") {
+    state.rackOpen = false;
+    state.helpOpen = false;
+    e.preventDefault();
+    return;
+  }
+
+  if (e.code === "KeyH" && !e.altKey) {
+    state.helpOpen = !state.helpOpen;
+    e.preventDefault();
+    return;
+  }
+
+  if (state.helpOpen) return;
+
+  if (e.code === "CapsLock") {
+    if (!e.repeat) state.rackOpen = !state.rackOpen;
+    e.preventDefault();
+    return;
+  }
+
+  if (state.rackOpen) {
+    if (e.code.startsWith("Digit")) {
+      const n = Number(e.code.slice(5));
+      if (n >= 1 && n <= 9) {
+        const idx = n - 1;
+        if (rackSlots[idx] && rackSlots[idx].ok) selectRackSlot(idx);
+      }
+      e.preventDefault();
+    }
+    return;
+  }
+
+  if (e.altKey) {
+    const map = {
+      KeyB: "mode",
+      KeyD: "scanRange",
+      KeyW: "acm",
+      KeyQ: "scale",
+      KeyR: "power",
+      KeyF: "lock",
+      KeyT: "select",
+      KeyX: "seeker",
+      KeyA: "noop"
+    };
+    if (map[e.code]) {
+      doAction(map[e.code]);
+      e.preventDefault();
+    }
+    return;
+  }
+
+  const actions = {
+    KeyB: "mode",
+    KeyR: "power",
+    KeyQ: "scale",
+    KeyD: "scanRange",
+    KeyW: "acm",
+    KeyF: "lock"
+  };
+  if (actions[e.code]) {
+    doAction(actions[e.code]);
+    e.preventDefault();
+    return;
+  }
+
+  if (e.code === "ArrowLeft") { doAction("azLeft"); e.preventDefault(); return; }
+  if (e.code === "ArrowRight") { doAction("azRight"); e.preventDefault(); return; }
+  if (e.code === "ArrowUp") { doAction("elUp"); e.preventDefault(); return; }
+  if (e.code === "ArrowDown") { doAction("elDown"); e.preventDefault(); return; }
+  if (e.code === "KeyE") { doAction("recenter"); e.preventDefault(); return; }
+
+  if (e.code === "KeyT") {
+    selectNextTarget();
+    e.preventDefault();
+    return;
+  }
+  if (e.code === "KeyX") {
+    clearLock();
+    e.preventDefault();
+    return;
+  }
+
+  if (e.code === "KeyI") {
+    state.irMode = !state.irMode;
+    state.irSeekerOn = state.irMode;
+    if (state.irMode) clearLock();
+    e.preventDefault();
+    return;
+  }
+  if (e.code === "KeyM") {
+    state.panelDisplay = (state.panelDisplay + 1) % 3;
+    e.preventDefault();
+    return;
+  }
+  if (e.code.startsWith("Digit")) {
+    const n = Number(e.code.slice(5));
+    if (n >= 1 && n <= 4) {
+      if (n === 1) { state.seeker = "SEARCHING"; state.progress = 0; }
+      if (n === 2) { state.seeker = "ACQUIRING"; state.progress = Math.max(0.35, Math.min(0.95, state.progress)); }
+      if (n === 3) { state.seeker = "TRACKING"; state.progress = 1; state.trackTime = 0; }
+      if (n === 4) { state.seeker = "HIGH"; state.progress = 1; }
+      e.preventDefault();
+    }
+  }
+});
+
+window.addEventListener("keyup", e => {
+  if (e.key === "Alt") state.altHeld = false;
+});
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  state.time += dt;
+
+  updateTargets(dt);
+  updateTracks();
+  updateModeLogic(dt);
+  updateSeeker(dt);
+  updateMissile(dt);
+  updateButtonHold(dt);
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, CONFIG.W, CONFIG.H);
+
+  drawRadarScanOverlay();
+  drawTopInfo();
+  drawCompass();
+  drawRwr();
+  drawGroundRadarSite();
+  drawRadarPanel();
+  drawLaunchPromptLine();
+  drawCenterRings();
+  drawTwsTracksOverlay();
+  drawLaunchEffect();
+  drawMissileOutcome();
+  drawWeaponBar();
+  drawRack();
+  drawHint();
+  drawHelp();
+
+  if (state.altHeld) {
+    drawText("鼠标模式 (Alt)", CONFIG.W - 220, 30, C.amber, 16);
+  }
+  const modeNames = ["按钮+标签", "仅按钮", "隐藏"];
+  drawText("雷达按钮: " + modeNames[state.panelDisplay], CONFIG.W - 220, 56, C.greenDim, 12);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "itemGroup.minethunder": "MineThunder",
+  "item.minethunder.sarh_missile": "半主动雷达弹 (SARH)",
+  "item.minethunder.arh_missile": "主动雷达弹 (ARH)",
+  "item.minethunder.ir_missile": "红外弹 (IR)",
+  "key.categories.minethunder": "MineThunder 现代空战",
+  "key.minethunder.lock_target": "锁定目标",
+  "key.minethunder.radar_mode": "切换雷达模式",
+  "key.minethunder.missile_type": "切换导弹类型",
+  "key.minethunder.fire_missile": "发射导弹",
+  "key.minethunder.radar_toggle": "雷达开关",
+  "key.minethunder.rack_select": "挂架选择（呼出鼠标）",
+  "key.minethunder.release_mouse": "呼出/捕获鼠标",
+  "key.minethunder.rack_select_enter": "挂架选择（Enter）",
+  "key.minethunder.radar_menu": "雷达功能菜单",
+  "item.minethunder.sarh_missile_firework": "半主动雷达弹烟花",
+  "item.minethunder.arh_missile_firework": "主动雷达弹烟花",
+  "item.minethunder.ir_missile_firework": "红外弹烟花"
+}

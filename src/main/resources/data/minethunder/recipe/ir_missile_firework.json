@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "group": "missile_firework",
+  "ingredients": [
+    { "item": "minecraft:firework_rocket" },
+    { "item": "minecraft:iron_ingot" },
+    { "item": "minecraft:gunpowder" }
+  ],
+  "result": {
+    "id": "minethunder:ir_missile_firework",
+    "count": 1
+  }
+}
