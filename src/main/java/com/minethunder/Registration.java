@@ -6,6 +6,7 @@ import com.minethunder.missile.IrMissileArrow;
 import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.missile.SarhMissileArrow;
+import com.minethunder.missile.SunHeatMarker;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -59,6 +60,14 @@ public final class Registration {
                     .clientTrackingRange(8)
                     .updateInterval(10)
                     .build("minethunder:countermeasure"));
+
+    public static final DeferredHolder<EntityType<?>, EntityType<SunHeatMarker>> SUN_HEAT_MARKER =
+            ENTITIES.register("sun_heat_marker", () -> EntityType.Builder
+                    .<SunHeatMarker>of(SunHeatMarker::new, MobCategory.MISC)
+                    .sized(0.0f, 0.0f)
+                    .clientTrackingRange(10)
+                    .updateInterval(10)
+                    .build("minethunder:sun_heat_marker"));
 
     // 导弹物品：用弓发射时生成对应导弹箭实体（箭 = 导弹）
     public static final DeferredHolder<Item, Item> SARH_MISSILE_ITEM =

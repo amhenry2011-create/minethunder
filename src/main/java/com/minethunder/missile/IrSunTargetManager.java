@@ -1,11 +1,10 @@
 package com.minethunder.missile;
 
 import com.minethunder.MineThunder;
+import com.minethunder.Registration;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.Marker;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -23,21 +22,21 @@ public final class IrSunTargetManager {
 
     private static final String PREFIX = "mt_heat_sun_";
     private static final double DISTANCE = 64.0;
-    private static final Map<UUID, Marker> MARKERS = new ConcurrentHashMap<>();
+    private static final Map<UUID, SunHeatMarker> MARKERS = new ConcurrentHashMap<>();
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         for (ServerLevel level : event.getServer().getAllLevels()) {
             if (level.getGameTime() % 10 != 0) continue;
             for (ServerPlayer player : level.players()) {
-                Marker marker = MARKERS.get(player.getUUID());
+                SunHeatMarker marker = MARKERS.get(player.getUUID());
                 if (marker != null && (marker.isRemoved() || marker.level() != level)) {
                     marker.discard();
                     MARKERS.remove(player.getUUID());
                     marker = null;
                 }
                 if (marker == null) {
-                    marker = EntityType.MARKER.create(level);
+                    marker = Registration.SUN_HEAT_MARKER.get().create(level);
                     if (marker == null) continue;
                     marker.setCustomName(Component.literal(PREFIX + player.getUUID()));
                     marker.setCustomNameVisible(false);
@@ -59,7 +58,7 @@ public final class IrSunTargetManager {
 
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
-        Marker marker = MARKERS.remove(event.getEntity().getUUID());
+        SunHeatMarker marker = MARKERS.remove(event.getEntity().getUUID());
         if (marker != null) marker.discard();
     }
 }

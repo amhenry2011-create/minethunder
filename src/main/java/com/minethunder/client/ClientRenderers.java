@@ -3,6 +3,7 @@ package com.minethunder.client;
 import com.minethunder.MineThunder;
 import com.minethunder.Registration;
 import com.minethunder.countermeasure.CountermeasureEntity;
+import net.minecraft.client.renderer.entity.NoopRenderer;
 import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
@@ -24,5 +25,6 @@ public final class ClientRenderers {
         event.registerEntityRenderer(Registration.IR_MISSILE.get(), MissileArrowRenderer::new);
         event.registerEntityRenderer(Registration.COUNTERMEASURE.get(),
                 context -> new ThrownItemRenderer<CountermeasureEntity>(context));
+        event.registerEntityRenderer(Registration.SUN_HEAT_MARKER.get(), NoopRenderer::new);
     }
 }

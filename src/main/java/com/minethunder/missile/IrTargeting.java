@@ -5,7 +5,6 @@ import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarTargetClass;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.Marker;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.level.Level;
@@ -51,7 +50,7 @@ public final class IrTargeting {
             candidates.add(firework);
         }
         // 太阳 Marker 在 64 b，大于普通 IR 全向锁定距离，单独查询。
-        for (Marker marker : level.getEntitiesOfClass(Marker.class,
+        for (SunHeatMarker marker : level.getEntitiesOfClass(SunHeatMarker.class,
                 shooter.getBoundingBox().inflate(256.0),
                 m -> m.isAlive() && isSunMarker(m))) {
             candidates.add(marker);
@@ -107,7 +106,7 @@ public final class IrTargeting {
     }
 
     public static boolean isSunMarker(Entity entity) {
-        return entity instanceof Marker marker
+        return entity instanceof SunHeatMarker marker
                 && marker.getCustomName() != null
                 && marker.getCustomName().getString().startsWith("mt_heat_sun_");
     }

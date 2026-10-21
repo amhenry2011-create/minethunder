@@ -4,7 +4,6 @@ import com.minethunder.countermeasure.Countermeasure;
 import com.minethunder.countermeasure.CountermeasureEntity;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.Marker;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.tags.EntityTypeTags;
@@ -34,7 +33,7 @@ public final class IrHeat {
     }
 
     public static double heat(Entity entity) {
-        if (entity instanceof Marker marker
+        if (entity instanceof SunHeatMarker marker
                 && marker.getCustomName() != null
                 && marker.getCustomName().getString().startsWith("mt_heat_sun_")) {
             return 1000.0;
