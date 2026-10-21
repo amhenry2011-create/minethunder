@@ -3,6 +3,7 @@ package com.minethunder.client;
 import com.minethunder.countermeasure.Countermeasure;
 import com.minethunder.countermeasure.CountermeasureEntity;
 import com.minethunder.missile.IrHeat;
+import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileArrow;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.radar.RadarContact;
@@ -38,10 +39,6 @@ public final class SensorDebugRenderer {
 
         drawHeader(g, mc, screenW, screenH);
 
-        if (RadarHud.radarOn) {
-            drawRadarBeams(g, mc, screenW, screenH);
-        }
-
         drawContacts(g, mc, screenW, screenH);
         drawMissiles(g, mc, screenW, screenH);
         drawCountermeasures(g, mc, screenW, screenH);
@@ -73,8 +70,8 @@ public final class SensorDebugRenderer {
                 "IR 候选：" + irTargetLine + String.format("  容错半径：%d×UI",
                         RadarHud.IR_LOCK_RING_BASE),
                 "IR FOV/离轴：" + (RadarHud.selectedSpec == null ? "-"
-                        : String.format("%.0f° / %.0f°", RadarHud.selectedSpec.seekerFovDeg,
-                        RadarHud.selectedSpec.lockAngleMaxDeg))
+                        : String.format("%.0f° / %.1f°", RadarHud.selectedSpec.seekerFovDeg,
+                        IrTargeting.effectiveLockAngleDeg(RadarHud.selectedSpec)))
         };
         drawTag(g, 8, 8, lines, GREEN, screenW, screenH);
     }

@@ -1,5 +1,6 @@
 package com.minethunder.client;
 
+import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.radar.RadarCore;
@@ -152,6 +153,10 @@ public final class RadarHudRenderer {
         if (mc.player == null) return;
         int nowTick = mc.player.tickCount;
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
+        if (RadarHud.currentMode == RadarMode.TWS) {
+            drawTwsContacts(g, mc, px, py, size, range, nowTick);
+            return;
+        }
 
         for (RadarEcho echo : RadarHud.echoes.values()) {
             if (echo.expired(nowTick)) continue;
@@ -220,6 +225,51 @@ public final class RadarHudRenderer {
                 }
             }
         }
+    }
+
+    private static void drawTwsContacts(GuiGraphics g, Minecraft mc, int px, int py,
+                                        int size, double range, int nowTick) {
+        for (TwsTrack track : TwsTrackManager.tracks()) {
+            if (track.range > range || track.range < 0.1) continue;
+            int bx = px + size / 2 + (int) (track.azimuthDeg / RadarHud.PANEL_AZIMUTH_DEG
+                    * (size / 2));
+            int by = py + size - (int) (track.range / range * size);
+            if (bx < px + 2 || bx >= px + size - 2 || by < py + 12
+                    || by >= py + size - 2) continue;
+            RadarEcho echo = RadarHud.echoes.get(track.uuid);
+            float alpha = echo == null ? 0.7f
+                    : Math.max(0.25f, 1f - (float) echo.notchSeverity * 0.65f);
+            boolean selected = track.entityId == RadarHud.selectedEchoId;
+            int color = alphaColor(selected ? WHITE : GREEN, alpha);
+            drawFilledCircle(g, bx, by, selected ? 3 : 2, color);
+            Entity entity = mc.level == null ? null : mc.level.getEntity(track.entityId);
+            Vec3 heading = entity != null ? entity.getViewVector(1.0F) : track.velocity;
+            drawHeadingLine(g, mc, heading, bx, by, color);
+            if (selected) {
+                int vLen = 10;
+                int dx = 7;
+                g.fill(bx - dx, by - vLen / 2, bx - dx + 2, by + vLen / 2, GREEN);
+                g.fill(bx + dx, by - vLen / 2, bx + dx + 2, by + vLen / 2, GREEN);
+            }
+        }
+    }
+
+    private static void drawHeadingLine(GuiGraphics g, Minecraft mc, Vec3 heading,
+                                        int x, int y, int color) {
+        if (heading.lengthSqr() < 1.0E-6) return;
+        heading = heading.normalize();
+        Vec3 look = mc.player.getViewVector(1.0F).normalize();
+        Vec3 right = look.cross(new Vec3(0, 1, 0));
+        if (right.lengthSqr() < 1.0E-6) return;
+        right = right.normalize();
+        double lateral = heading.dot(right);
+        double forward = heading.dot(look);
+        double magnitude = Math.hypot(lateral, forward);
+        if (magnitude < 1.0E-4) return;
+        int len = 8;
+        int ex = x + (int) Math.round(lateral / magnitude * len);
+        int ey = y - (int) Math.round(forward / magnitude * len);
+        drawLinePixels(g, x, y, ex, ey, color);
     }
 
     private static void drawTwsHeadingLine(GuiGraphics g, Minecraft mc, RadarEcho echo,
@@ -472,9 +522,9 @@ public final class RadarHudRenderer {
 
         int outerR = (int) (Math.tan(Math.toRadians(spec.lockAngleMaxDeg)) / tanHalf * halfH * ui);
         int innerR = (int) (Math.tan(Math.toRadians(spec.seekerFovDeg)) / tanHalf * halfH * ui);
-        // 红外弹外环使用实际 lockAngleMax 角度；超出屏幕时允许裁切。
+        // 红外弹外环恢复原视觉倍率；该外环同时决定实际锁定/发射边界。
         if (!radarGuided) {
-            outerR = Math.max(32, outerR);
+            outerR = Math.max(144, (int) Math.round(outerR * IrTargeting.OUTER_RING_SCALE));
             innerR = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
         } else {
             innerR = Math.max(8, Math.min(innerR, Math.max(24, screenH / 2 - 8)));

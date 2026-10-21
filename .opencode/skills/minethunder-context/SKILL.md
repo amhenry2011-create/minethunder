@@ -49,7 +49,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 - Firework crossbow canceled. Three missile fireworks are inventory ammo; `Ctrl+Alt` fires directly from inventory (no arm step). Auto ammo priority: manual → ARH → SARH → IR. Recipes exist for IR/SARH/ARH. Guided firework rendering remains.
 - Radar ranges 10/40/100/300/600/1000 b, default 300; scan widths ±120/60/30, default ±120.
 - Target selection is panel-only: Alt+T changes panel selection, no lock/screen action; Alt+F starts TRK PD. TRK PD is single-target only.
-- IR lock is implemented: the small ring acquires for 1 second, then follows the target inside the actual 30° large ring; off-boresight launch is allowed within that ring.
+- IR lock is implemented: the small ring acquires for 1 second, then follows the target inside the 6x visual outer ring; the outer ring is authoritative at about 73.9° effective off-boresight.
 - Radar panel selected target has horizontal + two vertical lines. Long screen vertical line removed. TWS scan center follows selected target.
 - Seeker toggle hides/shows rings only; it must not clear radar lock. Center crosshair removed; radar lock layer has progress arcs.
 - Current guidance core uses SI->blocks/tick conversion and PN; ARH active-seeker sophistication and full SARH/IR behavior are still in progress.
@@ -62,7 +62,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 - Automatic lock frames are removed except TWS current marking and ACM auto-intercept. ACM auto goes directly to TRK PD.
 - Track loss: dim over 100 ticks (5s), inertial tracking, reacquire restores; >5s drops lock.
 - ACM: position fixed; `Alt+D` disabled (width fixed ±3°); `Alt+Q` adjusts range; default 100 b.
-- Radar missile: no outer gimbal ring; seeker lock ring only when `Alt+X` enabled and radar locked. IR: outer ring is the actual 30° `lockAngleMax` and may clip off-screen; lock ring only when IR seeker active.
+- Radar missile: no outer gimbal ring; seeker lock ring only when `Alt+X` enabled and radar locked. IR: outer ring is the 6x visual `lockAngleMax` boundary (~73.9° effective) and may clip off-screen; lock ring only when IR seeker active.
 - Seeker keys: `Alt+X` toggles radar seeker; `Ctrl+Alt` fires directly when launch conditions are met.
 - GMI/GMTI has no independent mode implementation; do not claim it exists.
 

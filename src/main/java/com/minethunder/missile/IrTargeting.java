@@ -21,6 +21,16 @@ public final class IrTargeting {
     private IrTargeting() {}
 
     public static final double HEAT_THRESHOLD = IrHeat.THRESHOLD;
+    /** HUD 外环相对 lockAngleMax 的视觉倍率；该环同时是实际离轴边界。 */
+    public static final double OUTER_RING_SCALE = 6.0;
+
+    public static double effectiveLockAngleDeg(MissileSpec spec) {
+        if (spec == null || spec.guidance != MissileSpec.Guidance.IR) {
+            return spec == null ? 0.0 : spec.lockAngleMaxDeg;
+        }
+        return Math.toDegrees(Math.atan(
+                OUTER_RING_SCALE * Math.tan(Math.toRadians(spec.lockAngleMaxDeg))));
+    }
 
     @Nullable
     public static Entity findTarget(Level level, Player shooter, @Nullable Entity radarLock,
@@ -86,7 +96,7 @@ public final class IrTargeting {
 
         Vec3 look = shooter.getViewVector(1.0F).normalize();
         double angle = Math.toDegrees(Math.acos(clamp(look.dot(to.normalize()), -1.0, 1.0)));
-        if (angle > spec.lockAngleMaxDeg) return false;
+        if (angle > effectiveLockAngleDeg(spec)) return false;
 
         RadarTargetClass cls = RadarCore.classify(target);
         return sun || !RadarCore.isOccludedForTarget(level, eye, pos, cls);

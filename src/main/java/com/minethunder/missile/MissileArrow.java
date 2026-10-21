@@ -148,7 +148,8 @@ public abstract class MissileArrow extends AbstractArrow {
             if (lead.lengthSqr() > 1.0E-6) {
                 lead = lead.normalize();
                 // 预测点不能超出可用发射离轴角太多，否则近距离横穿会向侧面甩飞。
-                double maxAngle = spec.lockAngleMaxDeg;
+                double maxAngle = spec.guidance == MissileSpec.Guidance.IR
+                        ? IrTargeting.effectiveLockAngleDeg(spec) : spec.lockAngleMaxDeg;
                 if (lead.dot(look) >= Math.cos(Math.toRadians(maxAngle))) {
                     direction = lead;
                 }

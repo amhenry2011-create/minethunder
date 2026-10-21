@@ -6,78 +6,109 @@ import net.minecraft.world.entity.Entity;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
-/** 客户端 TWS：保留多个回波，但同一时间只有一个当前跟踪目标。 */
+/** 客户端 TWS：同时维护多条空中航迹，但只软锁一个当前目标。 */
 public final class TwsTrackManager {
     private TwsTrackManager() {}
 
-    /** 当前唯一被跟踪的目标 */
+    private static final int MAX_TRACKS = 6;
+    private static final Map<Integer, TwsTrack> TRACKS = new LinkedHashMap<>();
+    /** 当前唯一软锁目标 */
     public static TwsTrack current;
     /** 当前目标实体 ID；没有目标时为 -1 */
     public static int selectedId = -1;
 
     public static void update(int tick) {
-        if (current != null) {
-            RadarEcho echo = RadarHud.echoes.get(current.uuid);
-            if (echo == null || echo.expired(tick) || !isAir(current.entityId)) {
-                clear();
+        for (RadarEcho echo : RadarHud.echoes.values()) {
+            if (echo.expired(tick) || !isAir(echo.entityId)) continue;
+            TwsTrack track = TRACKS.get(echo.entityId);
+            if (track == null) {
+                track = new TwsTrack(echo.uuid, echo.entityId, echo.position,
+                        echo.velocity, echo.range, echo.azimuthDeg, echo.elevationDeg,
+                        echo.closure, echo.lastHitTick);
+                TRACKS.put(echo.entityId, track);
             } else {
-                if (echo.lastHitTick > current.lastPaintTick) {
-                    current.hits++;
+                if (echo.lastHitTick > track.lastPaintTick) {
+                    track.hits++;
                 }
-                current.lastPosition = echo.position;
-                current.velocity = echo.velocity;
-                current.range = echo.range;
-                current.azimuthDeg = echo.azimuthDeg;
-                current.elevationDeg = echo.elevationDeg;
-                current.closure = echo.closure;
-                current.lastPaintTick = echo.lastHitTick;
-                current.lastUpdateTick = tick;
-                current.confirmed = current.hits >= 2;
-                selectedId = current.entityId;
+                track.lastPosition = echo.position;
+                track.velocity = echo.velocity;
+                track.range = echo.range;
+                track.azimuthDeg = echo.azimuthDeg;
+                track.elevationDeg = echo.elevationDeg;
+                track.closure = echo.closure;
+                track.lastPaintTick = echo.lastHitTick;
+                track.lastUpdateTick = tick;
             }
+            track.confirmed = track.hits >= 2;
         }
-        if (current == null) {
+
+        TRACKS.entrySet().removeIf(e -> {
+            Entity entity = entity(e.getKey());
+            RadarEcho echo = RadarHud.echoes.get(e.getValue().uuid);
+            return entity == null || !entity.isAlive()
+                    || echo == null || echo.expired(tick)
+                    || RadarCore.classify(entity) != RadarTargetClass.AIR;
+        });
+        while (TRACKS.size() > MAX_TRACKS) {
+            TwsTrack farthest = null;
+            for (TwsTrack track : TRACKS.values()) {
+                if (track == current) continue;
+                if (farthest == null || track.range > farthest.range) {
+                    farthest = track;
+                }
+            }
+            if (farthest == null) break;
+            TRACKS.remove(farthest.entityId);
+        }
+
+        if (current == null || TRACKS.get(current.entityId) != current) {
+            current = null;
             selectNearest();
+        }
+        if (current != null) {
+            current.lastUpdateTick = tick;
+            selectedId = current.entityId;
+        } else {
+            selectedId = -1;
         }
     }
 
     private static void selectNearest() {
-        RadarEcho best = null;
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.expired(currentTick()) || !isAir(echo.entityId)) continue;
-            if (best == null || echo.range < best.range) best = echo;
+        TwsTrack best = null;
+        for (TwsTrack track : TRACKS.values()) {
+            if (best == null || track.range < best.range) best = track;
         }
         if (best != null) setCurrent(best);
     }
 
-    private static void setCurrent(RadarEcho echo) {
-        current = new TwsTrack(echo.uuid, echo.entityId, echo.position, echo.velocity,
-                echo.range, echo.azimuthDeg, echo.elevationDeg, echo.closure, echo.lastHitTick);
-        selectedId = current.entityId;
-    }
-
-    private static int currentTick() {
-        var mc = net.minecraft.client.Minecraft.getInstance();
-        return mc.player == null ? 0 : mc.player.tickCount;
+    private static void setCurrent(TwsTrack track) {
+        current = track;
+        selectedId = track.entityId;
     }
 
     public static TwsTrack find(UUID uuid) {
-        return current != null && current.uuid.equals(uuid) ? current : null;
+        for (TwsTrack track : TRACKS.values()) {
+            if (track.uuid.equals(uuid)) return track;
+        }
+        return null;
     }
 
     public static TwsTrack selected() {
         return current;
     }
 
-    /** 在当前已扫描回波中循环切换唯一跟踪目标。 */
+    public static List<TwsTrack> tracks() {
+        return new ArrayList<>(TRACKS.values());
+    }
+
+    /** 在所有 TWS 航迹间循环唯一软锁目标。 */
     public static void cycle() {
-        List<RadarEcho> valid = new ArrayList<>();
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (!echo.expired(currentTick()) && isAir(echo.entityId)) valid.add(echo);
-        }
+        List<TwsTrack> valid = tracks();
         valid.sort(Comparator.comparingDouble(e -> e.range));
         if (valid.isEmpty()) {
             clear();
@@ -94,6 +125,7 @@ public final class TwsTrackManager {
     }
 
     public static void clear() {
+        TRACKS.clear();
         current = null;
         selectedId = -1;
     }
