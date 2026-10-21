@@ -81,4 +81,6 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 
 ## Reporting
 
-After a task: report files changed, build result, jar copied, and what the user should test. Do not launch the game unless asked.
+After a task: report files changed, build result, jar copied, commit hash, push status, and what the user should test. Do not launch the game unless asked.
+
+After every completed version change, follow `.opencode/skills/minethunder-auto-release/SKILL.md`: build, copy the jar, commit, and push to `origin main` automatically.
