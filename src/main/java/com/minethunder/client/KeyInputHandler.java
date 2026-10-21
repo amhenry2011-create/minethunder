@@ -33,6 +33,7 @@ public final class KeyInputHandler {
 
     private static long lastCountermeasureMs = 0L;
     private static boolean altWasDown = false;
+    private static boolean ctrlComboWasDown = false;
     private static boolean altXWasDown = false;
     private static boolean altTWasDown = false;
     private static boolean altFWasDown = false;
@@ -77,6 +78,12 @@ public final class KeyInputHandler {
                 || com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_RIGHT_ALT);
     }
 
+    private static boolean isCtrlDown() {
+        long window = Minecraft.getInstance().getWindow().getWindow();
+        return com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_LEFT_CONTROL)
+                || com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_RIGHT_CONTROL);
+    }
+
     private static void dispenseCountermeasures(Minecraft mc) {
         long now = System.currentTimeMillis();
         if (now - lastCountermeasureMs < 80L) return;
@@ -97,11 +104,6 @@ public final class KeyInputHandler {
         boolean alt = (mods & GLFW.GLFW_MOD_ALT) != 0;
 
         // Alt 组合键统一交给 ClientTick 轮询，避免同一次按键触发两次。
-        // Ctrl+Alt 不是导引头入口：雷达导引头 Alt+X，红外导引头满弓。
-        if (alt && (mods & GLFW.GLFW_MOD_CONTROL) != 0) {
-            fireMissile(mc);
-            return;
-        }
         if (alt) return;
 
         switch (key) {
@@ -246,6 +248,11 @@ public final class KeyInputHandler {
         if (mc.player == null) return;
 
         boolean altDown = isAltDown();
+        boolean ctrlCombo = altDown && isCtrlDown();
+        if (ctrlCombo && !ctrlComboWasDown && mc.screen == null) {
+            fireMissile(mc);
+        }
+        ctrlComboWasDown = ctrlCombo;
         if (altDown != altWasDown) {
             if (altDown) {
                 if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();

@@ -39,18 +39,24 @@ public final class Registration {
             ENTITIES.register("sarh_missile_entity", () -> EntityType.Builder
                     .<SarhMissileArrow>of((type, level) -> new SarhMissileArrow(type, level, MissileSpecs.SARH), MobCategory.MISC)
                     .sized(0.5f, 0.5f)
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
                     .build("minethunder:sarh_missile_entity"));
 
     public static final DeferredHolder<EntityType<?>, EntityType<ArhMissileArrow>> ARH_MISSILE =
             ENTITIES.register("arh_missile_entity", () -> EntityType.Builder
                     .<ArhMissileArrow>of((type, level) -> new ArhMissileArrow(type, level, MissileSpecs.ARH), MobCategory.MISC)
                     .sized(0.5f, 0.5f)
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
                     .build("minethunder:arh_missile_entity"));
 
     public static final DeferredHolder<EntityType<?>, EntityType<IrMissileArrow>> IR_MISSILE =
             ENTITIES.register("ir_missile_entity", () -> EntityType.Builder
                     .<IrMissileArrow>of((type, level) -> new IrMissileArrow(type, level, MissileSpecs.IR), MobCategory.MISC)
                     .sized(0.5f, 0.5f)
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
                     .build("minethunder:ir_missile_entity"));
 
     public static final DeferredHolder<EntityType<?>, EntityType<CountermeasureEntity>> COUNTERMEASURE =

@@ -23,16 +23,17 @@ public record RwrSyncPacket(List<RwrContact> contacts) implements CustomPacketPa
 
     private static List<RwrContact> decode(RegistryFriendlyByteBuf buf) {
         int count = buf.readVarInt();
-        List<RwrContact> list = new ArrayList<>(count);
+        List<RwrContact> list = new ArrayList<>(Math.min(count, 64));
         for (int i = 0; i < count; i++) {
-            list.add(new RwrContact(
+            RwrContact contact = new RwrContact(
                     buf.readVarInt(),
                     RwrThreat.byCode(buf.readVarInt()),
                     buf.readFloat(),
                     buf.readFloat(),
                     buf.readFloat(),
                     buf.readUtf(48),
-                    buf.readVarInt()));
+                    buf.readVarInt());
+            if (list.size() < 64) list.add(contact);
         }
         return list;
     }

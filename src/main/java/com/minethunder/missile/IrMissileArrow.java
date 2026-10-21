@@ -45,7 +45,7 @@ public class IrMissileArrow extends MissileArrow {
         if (to.lengthSqr() < 1.0E-6) return loseSeeker();
         double angle = Math.toDegrees(Math.acos(
                 Math.max(-1.0, Math.min(1.0, forward.dot(to.normalize())))));
-        if (angle > spec.seekerFovDeg) return loseSeeker();
+        if (angle > spec.angleMaxDeg) return loseSeeker();
         seekerLostTicks = 0;
         return target;
     }

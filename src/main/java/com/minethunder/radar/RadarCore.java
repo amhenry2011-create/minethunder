@@ -58,6 +58,7 @@ public final class RadarCore {
         List<Entity> entities = level.getEntities(exclude, area, Entity::isAlive);
 
         for (Entity e : entities) {
+            if (e instanceof MissileArrow arrow && arrow.getOwner() == exclude) continue;
             Vec3 pos = e.getBoundingBox().getCenter();
             Vec3 to = pos.subtract(origin);
             double dist = to.length();
@@ -148,7 +149,8 @@ public final class RadarCore {
         }
         if (!(entity instanceof LivingEntity living) || !living.isAlive()) return null;
         if (living.isPassenger() && living.getVehicle() instanceof Boat) return null;
-        if (living.isInWater()) return null;
+        // 水面/水下活体仍作为空中模式可见目标，避免落水后完全隐身。
+        if (living.isInWater()) return RadarTargetClass.AIR;
 
         if (living.onGround()) return RadarTargetClass.GROUND;
 

@@ -7,6 +7,7 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -41,29 +42,66 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
         long now = player.serverLevel().getGameTime();
         long until = COOLDOWNS.getOrDefault(player.getUUID(), 0L);
         if (now < until) return;
-        COOLDOWNS.put(player.getUUID(), now + 2);
 
+        boolean deployed = false;
         if (kind == 3) {
-            spawnBurst(player, Countermeasure.CHAFF);
-            spawnBurst(player, Countermeasure.FLARE);
+            int chaff = consume(player, Items.SNOWBALL, 3);
+            int flares = consume(player, Items.FIRE_CHARGE, 3);
+            if (chaff > 0) {
+                spawnBurst(player, Countermeasure.CHAFF, chaff);
+                deployed = true;
+            }
+            if (flares > 0) {
+                spawnBurst(player, Countermeasure.FLARE, flares);
+                deployed = true;
+            }
         } else {
             Countermeasure countermeasure = switch (kind) {
                 case 1 -> Countermeasure.FLARE;
                 case 2 -> Countermeasure.ECM;
                 default -> Countermeasure.CHAFF;
             };
-            spawnBurst(player, countermeasure);
+            Item required = switch (countermeasure) {
+                case FLARE -> Items.FIRE_CHARGE;
+                case ECM -> Items.GUNPOWDER;
+                case CHAFF -> Items.SNOWBALL;
+            };
+            int count = consume(player, required, 3);
+            if (count > 0) {
+                spawnBurst(player, countermeasure, count);
+                deployed = true;
+            }
         }
+        if (deployed) COOLDOWNS.put(player.getUUID(), now + 2);
     }
 
     public static void clearCooldown(ServerPlayer player) {
         COOLDOWNS.remove(player.getUUID());
     }
 
-    private static void spawnBurst(ServerPlayer player, Countermeasure kind) {
-        for (int i = 0; i < 3; i++) {
+    private static void spawnBurst(ServerPlayer player, Countermeasure kind, int count) {
+        for (int i = 0; i < count; i++) {
             spawn(player, kind);
         }
+    }
+
+    private static int consume(ServerPlayer player, Item item, int requested) {
+        int remaining = requested;
+        for (int i = 0; i < player.getInventory().items.size() && remaining > 0; i++) {
+            ItemStack stack = player.getInventory().items.get(i);
+            if (!stack.is(item) || stack.isEmpty()) continue;
+            int take = Math.min(remaining, stack.getCount());
+            stack.shrink(take);
+            remaining -= take;
+        }
+        for (int i = 0; i < player.getInventory().offhand.size() && remaining > 0; i++) {
+            ItemStack stack = player.getInventory().offhand.get(i);
+            if (!stack.is(item) || stack.isEmpty()) continue;
+            int take = Math.min(remaining, stack.getCount());
+            stack.shrink(take);
+            remaining -= take;
+        }
+        return requested - remaining;
     }
 
     private static void spawn(ServerPlayer player, Countermeasure kind) {

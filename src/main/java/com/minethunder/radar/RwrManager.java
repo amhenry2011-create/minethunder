@@ -40,6 +40,7 @@ public final class RwrManager {
     private record Paint(int sourceId, String tag, long tick) {}
     /** target UUID -> source UUID -> 最近一次 SRC PD 扫描命中。 */
     private static final Map<UUID, Map<UUID, Paint>> PAINTS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> LAST_PAINT = new ConcurrentHashMap<>();
 
     private record TestSource(int sourceId, RwrThreat threat, double bearingDeg,
                               double range, String tag, long createdAt, boolean timed,
@@ -82,6 +83,7 @@ public final class RwrManager {
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
             TEST_SOURCES.remove(player.getUUID());
+            LAST_PAINT.remove(player.getUUID());
             PAINTS.remove(player.getUUID());
             for (Map<UUID, Paint> paints : PAINTS.values()) {
                 paints.remove(player.getUUID());
@@ -108,8 +110,16 @@ public final class RwrManager {
         double az = Math.toDegrees(RadarCore.azimuthBetween(look, targetPos.subtract(eye)));
         double el = Math.toDegrees(RadarCore.elevationBetween(look, targetPos.subtract(eye)));
         if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) return;
-        String tag = firstLetter(source);
         long tick = source.getServer().getTickCount();
+        long lastPaint = LAST_PAINT.getOrDefault(source.getUUID(), -100L);
+        if (tick - lastPaint < 10) return;
+        boolean seen = RadarCore.scan(source.level(), eye, look, RadarMode.SRC_PD,
+                RANGE, Math.toRadians(120.0), Math.toRadians(60.0),
+                source.getDeltaMovement(), source).stream()
+                .anyMatch(c -> c.entity.getId() == target.getId());
+        if (!seen) return;
+        LAST_PAINT.put(source.getUUID(), tick);
+        String tag = firstLetter(source);
         PAINTS.computeIfAbsent(target.getUUID(), k -> new ConcurrentHashMap<>())
                 .put(source.getUUID(), new Paint(source.getId(), tag, tick));
     }

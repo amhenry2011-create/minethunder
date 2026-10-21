@@ -77,6 +77,11 @@ public record MissileFirePacket(int guidance, int targetId) implements CustomPac
             double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
             double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
             if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) return;
+            boolean scanned = RadarCore.scan(player.level(), player.getEyePosition(),
+                    look, mode, spec.maxDistance, Math.toRadians(120.0),
+                    Math.toRadians(60.0), player.getDeltaMovement(), player)
+                    .stream().anyMatch(c -> c.entity.getId() == target.getId());
+            if (!scanned) return;
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),
                     target.getBoundingBox().getCenter(), targetClass)) {
                 return;

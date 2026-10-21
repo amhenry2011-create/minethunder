@@ -316,13 +316,9 @@ public final class RadarHudClientTicker {
         float quality = 0f;
         if (target != null) {
             RadarEcho echo = RadarHud.echoes.get(target.getUUID());
-            quality = echo == null ? 0.65f
+            quality = echo == null ? 0.3f
                     : (float) Math.max(0.15, 1.0 - echo.notchSeverity * 0.65);
             if (hardLock) quality *= Math.max(0.15f, RadarHud.lockAlpha);
-            if (RadarHud.currentMode == RadarMode.TWS) {
-                TwsTrack track = TwsTrackManager.selected();
-                if (track != null && track.confirmed) quality = Math.max(quality, 0.7f);
-            }
             quality = Math.max(0.05f, Math.min(1.0f, quality));
         }
         boolean changed = targetId != lastSentTargetId || state != lastSentSeekerState
@@ -768,6 +764,10 @@ public final class RadarHudClientTicker {
 
     /** 当前模式是否允许建立该目标的锁定。 */
     private static boolean lockAllowed(Entity entity) {
+        Player player = Minecraft.getInstance().player;
+        if (entity instanceof MissileArrow missile && missile.getOwner() == player) {
+            return false;
+        }
         RadarTargetClass targetClass = RadarCore.classify(entity);
         if (targetClass == null) return false;
         return switch (RadarHud.currentMode) {

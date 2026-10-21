@@ -803,6 +803,7 @@ public final class RadarHudRenderer {
         double speed = mc.player.getDeltaMovement().horizontalDistance() * 20.0;
 
         int ir = 0, sarh = 0, arh = 0;
+        int flares = 0, chaff = 0;
         for (var stack : mc.player.getInventory().items) {
             if (stack.getItem() instanceof MissileFireworkItem firework) {
                 switch (firework.getSpec().guidance) {
@@ -811,6 +812,8 @@ public final class RadarHudRenderer {
                     case ARH -> arh += stack.getCount();
                 }
             }
+            if (stack.is(net.minecraft.world.item.Items.FIRE_CHARGE)) flares += stack.getCount();
+            if (stack.is(net.minecraft.world.item.Items.SNOWBALL)) chaff += stack.getCount();
         }
         for (var stack : mc.player.getInventory().offhand) {
             if (stack.getItem() instanceof MissileFireworkItem firework) {
@@ -820,6 +823,8 @@ public final class RadarHudRenderer {
                     case ARH -> arh += stack.getCount();
                 }
             }
+            if (stack.is(net.minecraft.world.item.Items.FIRE_CHARGE)) flares += stack.getCount();
+            if (stack.is(net.minecraft.world.item.Items.SNOWBALL)) chaff += stack.getCount();
         }
 
         List<String[]> rows = new ArrayList<>();
@@ -828,8 +833,8 @@ public final class RadarHudRenderer {
         rows.add(new String[]{"空对空 IR", "x" + ir + statusSuffix(MissileSpec.Guidance.IR)});
         rows.add(new String[]{"空对空 SARH", "x" + sarh + statusSuffix(MissileSpec.Guidance.SARH)});
         rows.add(new String[]{"空对空 ARH", "x" + arh + statusSuffix(MissileSpec.Guidance.ARH)});
-        rows.add(new String[]{"热焰弹", "∞"});
-        rows.add(new String[]{"干扰箔", "∞"});
+        rows.add(new String[]{"热焰弹", "x" + flares});
+        rows.add(new String[]{"干扰箔", "x" + chaff});
 
         for (int i = 0; i < rows.size(); i++) {
             int yy = y + i * 12;

@@ -47,7 +47,7 @@ public class SarhMissileArrow extends MissileArrow {
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
         shooterId = tag.contains("MTShooter")
-                ? java.util.UUID.fromString(tag.getString("MTShooter")) : null;
+                ? parseUuid(tag.getString("MTShooter")) : null;
         lostLockTicks = tag.getInt("MTLostLockTicks");
         testGuided = tag.getBoolean("MTTestGuided");
         illuminated = false;

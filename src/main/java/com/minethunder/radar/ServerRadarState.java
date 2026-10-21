@@ -1,7 +1,9 @@
 package com.minethunder.radar;
 
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 
@@ -17,9 +19,10 @@ public final class ServerRadarState {
 
     private static final long EXPIRE_TICKS = 100;
 
-    public record LockState(int targetId, int seekerState, int radarMode,
-                            boolean hardLock, boolean radarOn, long updatedAt,
-                            float trackQuality) {}
+    public record LockState(int targetId, java.util.UUID targetUuid,
+                            ResourceKey<Level> dimension, int seekerState,
+                            int radarMode, boolean hardLock, boolean radarOn,
+                            long updatedAt, float trackQuality) {}
 
     private static final Map<UUID, LockState> LOCKS = new ConcurrentHashMap<>();
 
@@ -36,8 +39,12 @@ public final class ServerRadarState {
                 Math.min(RadarMode.values().length - 1, radarMode));
         float safeQuality = Float.isFinite(trackQuality)
                 ? Math.max(0.0f, Math.min(1.0f, trackQuality)) : 0.0f;
-        LOCKS.put(player.getUUID(), new LockState(safeTarget, safeSeeker, safeMode,
-                hardLock, true, player.serverLevel().getGameTime(), safeQuality));
+        Entity target = player.serverLevel().getEntity(safeTarget);
+        java.util.UUID targetUuid = target == null ? null : target.getUUID();
+        ResourceKey<Level> dimension = target == null ? null : player.serverLevel().dimension();
+        LOCKS.put(player.getUUID(), new LockState(safeTarget, targetUuid, dimension,
+                safeSeeker, safeMode, hardLock, true,
+                player.serverLevel().getGameTime(), safeQuality));
     }
 
     public static LockState get(Player player) {
@@ -53,10 +60,12 @@ public final class ServerRadarState {
     public static Entity getTarget(Player player) {
         LockState state = get(player);
         if (state == null || !state.radarOn() || state.targetId() < 0) return null;
-        if (player.level() instanceof ServerLevel serverLevel) {
-            return serverLevel.getEntity(state.targetId());
+        if (!(player.level() instanceof ServerLevel serverLevel)
+                || state.dimension() == null
+                || !state.dimension().equals(serverLevel.dimension())) {
+            return null;
         }
-        return null;
+        return state.targetUuid() == null ? null : serverLevel.getEntity(state.targetUuid());
     }
 
     public static boolean isRadarOn(Player player) {
@@ -68,19 +77,25 @@ public final class ServerRadarState {
     public static boolean hasTrack(Player player, int targetId) {
         LockState state = get(player);
         return state != null && state.radarOn() && state.targetId() == targetId
+                && state.dimension() != null
+                && state.dimension().equals(player.level().dimension())
                 && (state.hardLock() || state.radarMode() == RadarMode.TWS.ordinal());
     }
 
     public static boolean isLocked(Player player, int targetId) {
         LockState state = get(player);
         return state != null && state.radarOn() && state.hardLock()
-                && state.targetId() == targetId;
+                && state.targetId() == targetId
+                && state.dimension() != null
+                && state.dimension().equals(player.level().dimension());
     }
 
     /** 主动雷达弹：TWS 软跟踪目标或硬锁定目标即可发射；导引头对准只作视觉。 */
     public static boolean canLaunchArh(Player player) {
         LockState state = get(player);
         if (state == null || !state.radarOn() || state.targetId() < 0) return false;
+        if (state.dimension() == null
+                || !state.dimension().equals(player.level().dimension())) return false;
         return state.radarMode() == RadarMode.TWS.ordinal() || state.hardLock();
     }
 
@@ -90,6 +105,8 @@ public final class ServerRadarState {
         return state != null
                 && state.radarOn()
                 && state.hardLock()
+                && state.dimension() != null
+                && state.dimension().equals(player.level().dimension())
                 && state.seekerState() >= SeekerLockModel.State.TRACKING.ordinal();
     }
 

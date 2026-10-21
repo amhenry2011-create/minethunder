@@ -111,9 +111,8 @@ public final class MissileSpec {
     /** 当前制导视场：SARH/ARH 中段使用弹体可用转向角，ARH 末段/IR 使用导引头 FOV。 */
     public double guidanceFovDeg(boolean pitbullActive) {
         return switch (guidance) {
-            case SARH -> seekerFovDeg;
+            case SARH, IR -> angleMaxDeg;
             case ARH -> pitbullActive ? seekerFovDeg : angleMaxDeg;
-            case IR -> seekerFovDeg;
         };
     }
 

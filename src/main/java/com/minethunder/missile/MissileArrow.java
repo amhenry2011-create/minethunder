@@ -47,6 +47,7 @@ public abstract class MissileArrow extends AbstractArrow {
     protected double distanceFlown = 0;
     protected Vec3 lastPos;
     protected Vec3 launchPos;
+    @Nullable protected Vec3 launchVelocity;
     /** 防止导弹拦截/近炸递归引爆。 */
     protected boolean detonating = false;
     /** 测试弹不造成伤害，并允许测试弹之间互相拦截。 */
@@ -156,7 +157,9 @@ public abstract class MissileArrow extends AbstractArrow {
             }
         }
 
-        setDeltaMovement(carrier.add(direction.scale(relativeMps / 20.0)));
+        Vec3 initialVelocity = carrier.add(direction.scale(relativeMps / 20.0));
+        setDeltaMovement(initialVelocity);
+        this.launchVelocity = initialVelocity;
         // 构造时实体可能还没有被 setPos；初始化后同步碰撞检测起点。
         this.lastPos = position();
         this.launchPos = position();
@@ -222,7 +225,7 @@ public abstract class MissileArrow extends AbstractArrow {
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
-        targetId = tag.contains("MTTarget") ? UUID.fromString(tag.getString("MTTarget")) : null;
+        targetId = tag.contains("MTTarget") ? parseUuid(tag.getString("MTTarget")) : null;
         if (!level().isClientSide) {
             entityData.set(DATA_TARGET, Optional.ofNullable(targetId));
         }
@@ -243,6 +246,15 @@ public abstract class MissileArrow extends AbstractArrow {
         servoAcceleration = readVecOrZero(tag, "MTServoAccel");
         lastPos = position();
         launchPos = position();
+    }
+
+    @Nullable
+    protected static UUID parseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     private static void putVec(CompoundTag tag, String key, @Nullable Vec3 value) {
@@ -381,6 +393,15 @@ public abstract class MissileArrow extends AbstractArrow {
         // 命中地面/方块由服务端销毁。
         if (!level().isClientSide && (onGround() || isInWater())) {
             detonate(null);
+        }
+    }
+
+    @Override
+    public void shoot(double x, double y, double z, float velocity, float inaccuracy) {
+        Vec3 saved = launchVelocity;
+        super.shoot(x, y, z, velocity, inaccuracy);
+        if (saved != null) {
+            setDeltaMovement(saved);
         }
     }
 
@@ -551,15 +572,16 @@ public abstract class MissileArrow extends AbstractArrow {
             speedMps += spec.boostAcceleration(elapsed) / 20.0;
         } else {
             speedMps -= spec.dragDeceleration(speedMps, currentMass) / 20.0;
+            speedMps = Math.min(speedMps, spec.endSpeed);
         }
-        speedMps = Math.max(0, Math.min(speedMps, spec.endSpeed));
+        speedMps = Math.max(0, speedMps);
         // 大过载转弯消耗动能，体现 4/8 点方向能量耗弹。
         double inducedDrag = servoAcceleration.length() / Math.max(speedMps, 1.0)
                 * 0.4 * dt;
         speedMps = Math.max(0.0, speedMps - inducedDrag);
         // 爬升需要付出势能，避免 loft 免费获得高度。
         speedMps = Math.max(0.0, speedMps
-                - 9.81 * newVelocity.y / Math.max(speedMps, 1.0));
+                - 9.81 * (newVelocity.y * 20.0) / Math.max(speedMps, 1.0) * dt);
 
         if (newVelocity.lengthSqr() > 1e-8) {
             newVelocity = newVelocity.normalize().scale(speedMps / 20.0);
@@ -795,9 +817,6 @@ public abstract class MissileArrow extends AbstractArrow {
         if (!level().isClientSide) {
             if (target instanceof MissileArrow other && other != this && !other.detonating) {
                 other.detonate(null);
-            }
-            if (!testMissile && target instanceof LivingEntity living) {
-                living.hurt(level().damageSources().explosion(this, getOwner()), EXPLOSION_DAMAGE);
             }
             if (!testMissile) {
                 level().explode(this, getX(), getY(), getZ(), EXPLOSION_RADIUS, Level.ExplosionInteraction.NONE);

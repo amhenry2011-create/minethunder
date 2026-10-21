@@ -18,6 +18,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.ArrayList;
@@ -40,6 +41,11 @@ public final class BlockRadarTargetManager {
 
     private record BlockCluster(BlockPos center, boolean moving, RadarTargetClass targetClass,
                                 String markerName, Direction direction) {}
+
+    @SubscribeEvent
+    public static void onServerStopped(ServerStoppedEvent event) {
+        MARKERS.clear();
+    }
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
