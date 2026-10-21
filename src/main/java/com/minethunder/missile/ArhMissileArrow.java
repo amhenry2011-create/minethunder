@@ -1,6 +1,7 @@
 package com.minethunder.missile;
 
 import com.minethunder.radar.RadarCore;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
@@ -20,6 +21,20 @@ public class ArhMissileArrow extends MissileArrow {
 
     public ArhMissileArrow(EntityType<? extends MissileArrow> type, Level level, MissileSpec spec) {
         super(type, level, spec);
+    }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        tag.putBoolean("MTMprf", mprfActive);
+        tag.putInt("MTSearchCooldown", searchCooldown);
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        mprfActive = tag.getBoolean("MTMprf");
+        searchCooldown = tag.getInt("MTSearchCooldown");
     }
 
     @Override
@@ -46,7 +61,7 @@ public class ArhMissileArrow extends MissileArrow {
             setTarget(acquired);
             return acquired;
         }
-        return current;
+        return null;
     }
 
     private boolean inSeekerCone(@Nullable Entity target) {

@@ -14,6 +14,7 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /** 客户端请求：从背包扣除对应导弹烟花并直接发射。 */
@@ -57,12 +58,27 @@ public record MissileFirePacket(int guidance, int targetId) implements CustomPac
                 return;
             }
         } else {
+            ServerRadarState.LockState state = ServerRadarState.get(player);
             target = ServerRadarState.getTarget(player);
-            if (target == null || !target.isAlive()) {
+            if (state == null || !state.radarOn()
+                    || target == null || !target.isAlive() || target == player) {
                 return;
             }
+            var targetClass = RadarCore.classify(target);
+            if (targetClass == null) return;
+            var mode = state.radarMode() >= 0
+                    && state.radarMode() < com.minethunder.radar.RadarMode.values().length
+                    ? com.minethunder.radar.RadarMode.values()[state.radarMode()]
+                    : com.minethunder.radar.RadarMode.SRC_PD;
+            if (!mode.accepts(targetClass)) return;
+            if (player.distanceTo(target) > spec.maxDistance) return;
+            Vec3 to = target.getBoundingBox().getCenter().subtract(player.getEyePosition());
+            Vec3 look = player.getViewVector(1.0F).normalize();
+            double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
+            double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
+            if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) return;
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),
-                    target.getBoundingBox().getCenter(), RadarCore.classify(target))) {
+                    target.getBoundingBox().getCenter(), targetClass)) {
                 return;
             }
             if (spec.guidance == MissileSpec.Guidance.ARH

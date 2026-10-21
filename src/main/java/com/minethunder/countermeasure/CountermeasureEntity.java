@@ -1,5 +1,6 @@
 package com.minethunder.countermeasure;
 
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.projectile.ThrowableItemProjectile;
 import net.minecraft.world.item.Item;
@@ -22,6 +23,18 @@ public class CountermeasureEntity extends ThrowableItemProjectile {
     @Override
     protected Item getDefaultItem() {
         return Items.SNOWBALL;
+    }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        tag.putInt("MTLifetime", tickCount);
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        tickCount = tag.getInt("MTLifetime");
     }
 
     public int getRemainingTicks() {

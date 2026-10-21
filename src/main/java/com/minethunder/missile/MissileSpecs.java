@@ -21,7 +21,7 @@ public final class MissileSpecs {
             12.0,       // rateMax 12°/s
             10.0,       // gateWidth 10°
             3.0,        // prolongationTimeMax 3s
-            0,          // startSpeed 继承载机
+            0,          // startSpeed 载机速度 + 20 m/s 弹射
             48.0,       // endSpeed ≈ 鞘翅极速 40 b/s × 1.2
             1000.0,     // WT R-27ER 发射距离 100 km，按 10 b/km 缩放
             60.0,       // WT R-27ER 制导时间 60 s

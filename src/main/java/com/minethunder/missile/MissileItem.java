@@ -44,9 +44,11 @@ public class MissileItem extends ArrowItem {
             if (arrow instanceof SarhMissileArrow sarh) {
                 sarh.setShooter(serverPlayer);
             }
-            Entity locked = ServerRadarState.getTarget(serverPlayer);
-            if (locked != null) {
-                arrow.setTarget(locked);
+            if (spec.guidance != MissileSpec.Guidance.IR) {
+                Entity locked = ServerRadarState.getTarget(serverPlayer);
+                if (locked != null) {
+                    arrow.setTarget(locked);
+                }
             }
         }
         // 必须在设置目标后初始化，才能计算预测拦截点。

@@ -21,8 +21,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 雷达核心：探测与锁定，包含空地海杂波、多普勒盲区、地形遮挡等物理约束（SPEC §4）。
- * 纯逻辑，无渲染，服务端与客户端共用。
+ * 雷达核心：探测与锁定，包含多普勒盲区、地形遮挡等物理约束（SPEC §4）。
+ * 当前所有可选模式均为 PD/面搜索；纯逻辑，无渲染，服务端与客户端共用。
  */
 public final class RadarCore {
     private RadarCore() {}
@@ -70,10 +70,11 @@ public final class RadarCore {
             // 波束张角内
             if (Math.abs(az) > halfAzimuth || Math.abs(el) > halfElevation) continue;
 
-            // 静止悬空方块结构只有 ACQ PD 可见；TWS/ACM 只收运动目标。
+            // 静止悬空方块结构在 SRC PD/ACQ PD 可见；TWS/ACM 只收运动目标。
             if (e instanceof Marker marker
                     && RadarBlockTargets.isStatic(marker)
-                    && mode != RadarMode.ACQ_PD) {
+                    && mode != RadarMode.ACQ_PD
+                    && mode != RadarMode.SRC_PD) {
                 continue;
             }
 
@@ -86,8 +87,8 @@ public final class RadarCore {
             }
             boolean occluded = false;
 
-            // 相对径向速度：目标速度减去载机速度后投影到视线方向。
-            Vec3 relativeVelocity = e.getDeltaMovement().subtract(radarVelocity);
+            // 相对径向速度：目标速度减去载机速度后投影到视线方向，统一使用 m/s。
+            Vec3 relativeVelocity = e.getDeltaMovement().subtract(radarVelocity).scale(20.0);
             double radialVel = relativeVelocity.dot(dir);
 
             // GMI 是动目标指示：按目标实际水平移动速度判定，不要求径向速度。
@@ -96,18 +97,8 @@ public final class RadarCore {
                 continue;
             }
 
-            // 39 是降级而非隐身：近距离 0-50b 允许烧穿，远距离才加深干扰。
-            double notchSeverity = 0.0;
-            if (mode.usesNotch() && Math.abs(radialVel) < DOPPLER_NOTCH_THRESHOLD) {
-                double depth = 1.0 - Math.abs(radialVel) / DOPPLER_NOTCH_THRESHOLD;
-                double close = Math.max(0.0, Math.min(1.0,
-                        1.0 - dist / NOTCH_BURN_THROUGH_RANGE));
-                notchSeverity = depth * mode.notchSusceptibility() * (1.0 - 0.85 * close);
-            }
+            double notchSeverity = notchSeverity(radialVel, dist, mode);
             boolean notch = notchSeverity > 0.4;
-
-            // 地面/海面杂波：非多普勒模式下，近地目标被杂波淹没
-            if (applyClutterMask(level, e, pos, mode, origin)) continue;
 
             contacts.add(new RadarContact(e, dist, Math.toDegrees(az), Math.toDegrees(el),
                     radialVel, pos, occluded, notch, notchSeverity, targetClass));
@@ -115,21 +106,17 @@ public final class RadarCore {
         return contacts;
     }
 
-    /**
-     * 地面/海面杂波掩蔽判定（SPEC §4.1 / §4.2）。
-     * - 非脉冲多普勒模式：目标贴近地面/海面时，回波被杂波淹没（战雷表现为绿色 haze），简化为不可探测。
-     * - 脉冲多普勒模式：目标径向速度足够即可下视（Notch 由 scan 中的速度门处理）。
-     * - MTI：移动目标指示，下视能力更强。
-     */
-    private static boolean applyClutterMask(Level level, Entity target, Vec3 targetPos, RadarMode mode, Vec3 origin) {
-        if (mode.isSurfaceSearch()) {
-            return false;
+    /** 计算 0..1 的 Notch 严重度；径向速度必须使用 m/s。 */
+    public static double notchSeverity(double radialVelocityMps, double distance,
+                                       RadarMode mode) {
+        if (!mode.usesNotch()
+                || Math.abs(radialVelocityMps) >= DOPPLER_NOTCH_THRESHOLD) {
+            return 0.0;
         }
-        if (mode.isDoppler()) {
-            return false; // PD/TWS/STT 可下视，杂波由速度门过滤
-        }
-        // 非 PD 模式：目标贴地/贴海则被杂波掩蔽
-        return isNearSurface(level, targetPos);
+        double depth = 1.0 - Math.abs(radialVelocityMps) / DOPPLER_NOTCH_THRESHOLD;
+        double close = Math.max(0.0, Math.min(1.0,
+                1.0 - distance / NOTCH_BURN_THROUGH_RANGE));
+        return depth * mode.notchSusceptibility() * (1.0 - 0.85 * close);
     }
 
     /** 目标是否贴近地面或海面（下方方块为地表/水） */

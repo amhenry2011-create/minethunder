@@ -1,8 +1,8 @@
 # MineThunder 开发状态文档
 
-> 更新时间：2026-10-18
+> 更新时间：2026-10-21
 > 项目位置：`/Users/henry/code/minethunder`
-> 平台：Minecraft Java 1.21.1 / Forge 52.1.20
+> 平台：Minecraft Java 1.21.1 / NeoForge 21.1.236
 
 ---
 
@@ -11,7 +11,7 @@
 | 项目 | 状态 |
 |------|------|
 | 设计文档 SPEC.md | ✅ 完成（含雷达/导弹/对抗/杂波/键位） |
-| Forge 骨架 | ✅ 完成，可正常解析配置 |
+| NeoForge 骨架 | ✅ 完成，可正常解析配置 |
 | 核心逻辑代码 | ✅ 完成（雷达/导弹/对抗/HUD 骨架） |
 | Gradle 构建 | ✅ 已通过，产物 `build/libs/minethunder-0.1.0.jar`（约 115 KB） |
 

@@ -41,11 +41,6 @@ public enum RadarMode {
         };
     }
 
-    /** 是否为脉冲多普勒类（有速度门，能过滤静止杂波） */
-    public boolean isDoppler() {
-        return this == SRC_PD || this == ACQ_PD || this == TWS || this == GMI || this == ACM || this == STT;
-    }
-
     /** 是否为地面/海面搜索模式 */
     public boolean isSurfaceSearch() {
         return this == GMI || this == SEA;

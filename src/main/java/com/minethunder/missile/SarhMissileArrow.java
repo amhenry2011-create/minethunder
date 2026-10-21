@@ -2,6 +2,7 @@ package com.minethunder.missile;
 
 import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.ServerRadarState;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
@@ -35,43 +36,70 @@ public class SarhMissileArrow extends MissileArrow {
     }
 
     @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        if (shooterId != null) tag.putString("MTShooter", shooterId.toString());
+        tag.putInt("MTLostLockTicks", lostLockTicks);
+        tag.putBoolean("MTTestGuided", testGuided);
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        shooterId = tag.contains("MTShooter")
+                ? java.util.UUID.fromString(tag.getString("MTShooter")) : null;
+        lostLockTicks = tag.getInt("MTLostLockTicks");
+        testGuided = tag.getBoolean("MTTestGuided");
+        illuminated = false;
+    }
+
+    @Override
     protected Entity resolveTarget() {
         if (testGuided && testMissile) {
             Entity testTarget = getTarget();
-            return testTarget != null && testTarget.isAlive() ? testTarget : null;
+            if (testTarget != null && testTarget.isAlive()) {
+                lostLockTicks = 0;
+                illuminated = true;
+                return testTarget;
+            }
+            return loseIllumination();
         }
         // SARH：发射方必须保持 STT 锁定，否则失锁
-        if (shooterId == null) return null;
+        if (shooterId == null) return loseIllumination();
         Player shooter = level().getPlayerByUUID(shooterId);
-        if (shooter == null) return null;
+        if (shooter == null) return loseIllumination();
 
         Entity target = getTarget();
-        if (target == null || !target.isAlive()) return null;
+        if (target == null || !target.isAlive()) return loseIllumination();
 
         Vec3 eye = shooter.getEyePosition();
         Vec3 targetPos = target.getBoundingBox().getCenter();
-        boolean illuminated = ServerRadarState.isLocked(shooter, target.getId())
+        boolean nowIlluminated = ServerRadarState.isLocked(shooter, target.getId())
                 && shooter.level() == target.level()
                 && shooter.distanceTo(target) <= spec.maxDistance
                 && !RadarCore.isOccludedForTarget(shooter.level(), eye, targetPos,
                         RadarCore.classify(target));
-        this.illuminated = illuminated;
-        if (illuminated) {
+        this.illuminated = nowIlluminated;
+        if (nowIlluminated) {
             lostLockTicks = 0;
             return target;
         }
+        return loseIllumination();
+    }
 
-        // 失锁后继续使用最后航迹做 IOG 修正；超过延续时间自爆。
+    private Entity loseIllumination() {
+        illuminated = false;
         lostLockTicks++;
         if (lostLockTicks > Math.max(1, spec.prolongationTimeMax * 20)) {
             detonate(null);
             return null;
         }
-        return target;
+        return null;
     }
 
     @Override
     protected boolean datalinkValid() {
+        if (testGuided && testMissile) return true;
         return illuminated && super.datalinkValid();
     }
 }

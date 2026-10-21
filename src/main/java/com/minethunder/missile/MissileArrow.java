@@ -10,8 +10,10 @@ import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.ServerRadarState;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.particles.ParticleTypes;
@@ -111,7 +113,8 @@ public abstract class MissileArrow extends AbstractArrow {
 
     /** 当前导弹是否有可用的载机雷达数据链（硬锁定或 TWS 跟踪）。 */
     protected boolean datalinkValid() {
-        if (spec.guidance == MissileSpec.Guidance.IR) return true;
+        if (spec.guidance == MissileSpec.Guidance.IR) return false;
+        if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return false;
         if (!(getOwner() instanceof ServerPlayer player)) return false;
         ServerRadarState.LockState state = ServerRadarState.get(player);
         if (state == null || state.targetId() < 0 || targetId == null) return false;
@@ -125,7 +128,7 @@ public abstract class MissileArrow extends AbstractArrow {
     public void initializeLaunch(LivingEntity shooter) {
         Vec3 carrier = shooter.getDeltaMovement();
         double carrierMps = carrier.length() * 20.0;
-        double initialMps = Math.max(20.0, spec.initialSpeed(carrierMps));
+        double relativeMps = spec.startSpeed > 0 ? spec.startSpeed : 20.0;
         Vec3 look = shooter.getViewVector(1.0F).normalize();
         Vec3 direction = look;
 
@@ -135,7 +138,7 @@ public abstract class MissileArrow extends AbstractArrow {
             Vec3 targetCenter = target.getBoundingBox().getCenter();
             Vec3 targetVel = target.getDeltaMovement().scale(20.0);
             Vec3 aim = targetCenter;
-            double speed = Math.max(initialMps, 1.0);
+            double speed = Math.max(carrierMps + relativeMps, 1.0);
             // 两次迭代足以修正高速横穿目标的提前量。
             for (int i = 0; i < 2; i++) {
                 double time = eye.distanceTo(aim) / speed;
@@ -145,14 +148,14 @@ public abstract class MissileArrow extends AbstractArrow {
             if (lead.lengthSqr() > 1.0E-6) {
                 lead = lead.normalize();
                 // 预测点不能超出可用发射离轴角太多，否则近距离横穿会向侧面甩飞。
-                double maxAngle = Math.max(60.0, spec.lockAngleMaxDeg + 15.0);
+                double maxAngle = spec.lockAngleMaxDeg;
                 if (lead.dot(look) >= Math.cos(Math.toRadians(maxAngle))) {
                     direction = lead;
                 }
             }
         }
 
-        setDeltaMovement(carrier.add(direction.scale(initialMps / 20.0)));
+        setDeltaMovement(carrier.add(direction.scale(relativeMps / 20.0)));
         // 构造时实体可能还没有被 setPos；初始化后同步碰撞检测起点。
         this.lastPos = position();
         this.launchPos = position();
@@ -185,10 +188,79 @@ public abstract class MissileArrow extends AbstractArrow {
         this.measuredTargetVelocity = Vec3.ZERO;
         this.measuredTargetAcceleration = Vec3.ZERO;
         this.measuredTargetTick = -100;
+        this.lastKnownTargetPos = null;
+        this.lastKnownTargetVelocity = Vec3.ZERO;
+        this.lastKnownTargetTick = -1;
         this.guidanceLosDir = null;
         if (!level().isClientSide) {
             this.entityData.set(DATA_TARGET, Optional.ofNullable(this.targetId));
         }
+    }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        if (targetId != null) tag.putString("MTTarget", targetId.toString());
+        tag.putInt("MTAge", age);
+        tag.putDouble("MTDistanceFlown", distanceFlown);
+        tag.putBoolean("MTPitbull", pitbullActive);
+        tag.putBoolean("MTTest", testMissile);
+        tag.putInt("MTDatalinkCooldown", datalinkUpdateCooldown);
+        tag.putFloat("MTTrackQuality", trackQuality);
+        tag.putInt("MTMeasuredTick", measuredTargetTick);
+        tag.putInt("MTLastKnownTick", lastKnownTargetTick);
+        putVec(tag, "MTMeasuredPos", measuredTargetPos);
+        putVec(tag, "MTMeasuredVel", measuredTargetVelocity);
+        putVec(tag, "MTMeasuredAccel", measuredTargetAcceleration);
+        putVec(tag, "MTLastKnownPos", lastKnownTargetPos);
+        putVec(tag, "MTLastKnownVel", lastKnownTargetVelocity);
+        putVec(tag, "MTGuidanceLos", guidanceLosDir);
+        putVec(tag, "MTServoAccel", servoAcceleration);
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        targetId = tag.contains("MTTarget") ? UUID.fromString(tag.getString("MTTarget")) : null;
+        if (!level().isClientSide) {
+            entityData.set(DATA_TARGET, Optional.ofNullable(targetId));
+        }
+        age = tag.getInt("MTAge");
+        distanceFlown = tag.getDouble("MTDistanceFlown");
+        pitbullActive = tag.getBoolean("MTPitbull");
+        testMissile = tag.getBoolean("MTTest");
+        datalinkUpdateCooldown = tag.getInt("MTDatalinkCooldown");
+        trackQuality = tag.getFloat("MTTrackQuality");
+        measuredTargetTick = tag.getInt("MTMeasuredTick");
+        lastKnownTargetTick = tag.getInt("MTLastKnownTick");
+        measuredTargetPos = readVec(tag, "MTMeasuredPos");
+        measuredTargetVelocity = readVecOrZero(tag, "MTMeasuredVel");
+        measuredTargetAcceleration = readVecOrZero(tag, "MTMeasuredAccel");
+        lastKnownTargetPos = readVec(tag, "MTLastKnownPos");
+        lastKnownTargetVelocity = readVecOrZero(tag, "MTLastKnownVel");
+        guidanceLosDir = readVec(tag, "MTGuidanceLos");
+        servoAcceleration = readVecOrZero(tag, "MTServoAccel");
+        lastPos = position();
+        launchPos = position();
+    }
+
+    private static void putVec(CompoundTag tag, String key, @Nullable Vec3 value) {
+        if (value == null) return;
+        tag.putDouble(key + "X", value.x);
+        tag.putDouble(key + "Y", value.y);
+        tag.putDouble(key + "Z", value.z);
+    }
+
+    @Nullable
+    private static Vec3 readVec(CompoundTag tag, String key) {
+        if (!tag.contains(key + "X")) return null;
+        return new Vec3(tag.getDouble(key + "X"), tag.getDouble(key + "Y"),
+                tag.getDouble(key + "Z"));
+    }
+
+    private static Vec3 readVecOrZero(CompoundTag tag, String key) {
+        Vec3 value = readVec(tag, key);
+        return value == null ? Vec3.ZERO : value;
     }
 
     @Nullable
@@ -251,7 +323,10 @@ public abstract class MissileArrow extends AbstractArrow {
         // 发射瞬间目标捕获（服务端）：按发射者视线方向找目标
         if (!level().isClientSide && targetId == null && age <= 2) {
             if (getOwner() instanceof LivingEntity shooter) {
-                LivingEntity acquired = MissileTargeting.findLookTarget(
+                Entity acquired = spec.guidance == MissileSpec.Guidance.IR
+                        && shooter instanceof net.minecraft.world.entity.player.Player player
+                        ? IrTargeting.findTarget(level(), player, null, spec)
+                        : MissileTargeting.findLookTarget(
                         level(), shooter, spec.acquireRange(), spec.lockAngleMaxDeg);
                 if (acquired != null) {
                     setTarget(acquired);
@@ -291,13 +366,33 @@ public abstract class MissileArrow extends AbstractArrow {
         if (!level().isClientSide && fuseTarget != null && fuseTarget.isAlive()
                 && !IrTargeting.isSunMarker(fuseTarget)) {
             double d = pos.distanceTo(fuseTarget.getBoundingBox().getCenter());
-            if (d <= spec.proximityFuseRadius) {
+            boolean fuseHit = d <= spec.proximityFuseRadius;
+            if (!fuseHit && previous != null) {
+                fuseHit = fuseTarget.getBoundingBox()
+                        .inflate(spec.proximityFuseRadius)
+                        .clip(previous, pos).isPresent();
+            }
+            if (fuseHit) {
                 detonate(fuseTarget);
             }
         }
 
         // 命中地面/方块由服务端销毁。
         if (!level().isClientSide && (onGround() || isInWater())) {
+            detonate(null);
+        }
+    }
+
+    @Override
+    protected void onHitEntity(net.minecraft.world.phys.EntityHitResult result) {
+        if (!level().isClientSide) {
+            detonate(result.getEntity());
+        }
+    }
+
+    @Override
+    protected void onHitBlock(net.minecraft.world.phys.BlockHitResult result) {
+        if (!level().isClientSide) {
             detonate(null);
         }
     }
@@ -351,7 +446,9 @@ public abstract class MissileArrow extends AbstractArrow {
         for (CountermeasureEntity decoy : level().getEntitiesOfClass(
                 CountermeasureEntity.class, getBoundingBox().inflate(48.0))) {
             if (!decoy.isAlive() || !decoy.deceives(threat)) continue;
-            Vec3 to = decoy.getBoundingBox().getCenter().subtract(pos);
+            Vec3 decoyCenter = decoy.getBoundingBox().getCenter();
+            if (RadarCore.isOccluded(level(), pos, decoyCenter)) continue;
+            Vec3 to = decoyCenter.subtract(pos);
             double dist = to.length();
             if (dist < 0.5 || dist > 48.0 || dist > currentDist * 1.2 + 8.0) continue;
             double angle = Math.toDegrees(Math.acos(clamp(velDir.dot(to.normalize()), -1, 1)));
@@ -397,12 +494,10 @@ public abstract class MissileArrow extends AbstractArrow {
         if (speedMps < 1.0) return;
         Vec3 velDir = velocity.normalize();
 
-        // 有载机数据链时，PN/APN 直接使用数据链目标；rateMax 只限制无数据链时的导引头。
-        boolean hasDatalink = datalinkValid();
-        boolean seekerLimited = !hasDatalink
-                && (spec.guidance == MissileSpec.Guidance.IR
+        // IR/SARH 以及 ARH 末段都必须受导引头视场和角跟踪速率限制。
+        boolean seekerLimited = spec.guidance == MissileSpec.Guidance.IR
                 || spec.guidance == MissileSpec.Guidance.SARH
-                || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive));
+                || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive);
         if (seekerLimited) {
             if (guidanceLosDir == null) {
                 guidanceLosDir = losDir;
@@ -416,7 +511,8 @@ public abstract class MissileArrow extends AbstractArrow {
 
         // 制导视场限制：雷达弹中段使用弹体可用转向角，ARH 末段才收紧到导引头 FOV。
         double angle = Math.toDegrees(Math.acos(clamp(velDir.dot(losDir), -1, 1)));
-        double allowedFov = hasDatalink ? spec.angleMaxDeg : spec.guidanceFovDeg(pitbullActive);
+        double allowedFov = seekerLimited
+                ? spec.guidanceFovDeg(pitbullActive) : spec.angleMaxDeg;
         if (angle > allowedFov) {
             return;
         }
@@ -448,16 +544,21 @@ public abstract class MissileArrow extends AbstractArrow {
         // m/s² -> blocks/tick²（1 block/tick = 20 m/s，1 tick = 1/20 s）
         Vec3 newVelocity = velocity.add(servoAcceleration.scale(1.0 / 400.0));
 
+        double currentMass = spec.massAt(elapsed);
         // 动力段/滑翔段速度
-        if (spec.isBoosting(age / 20.0)) {
-            speedMps += spec.boostAcceleration() / 20.0;
+        if (spec.isBoosting(elapsed)) {
+            speedMps += spec.boostAcceleration(elapsed) / 20.0;
         } else {
-            speedMps -= spec.dragDeceleration(speedMps) / 20.0;
+            speedMps -= spec.dragDeceleration(speedMps, currentMass) / 20.0;
         }
         speedMps = Math.max(0, Math.min(speedMps, spec.endSpeed));
         // 大过载转弯消耗动能，体现 4/8 点方向能量耗弹。
-        double inducedDrag = servoAcceleration.length() / Math.max(speedMps, 1.0) * 0.4;
+        double inducedDrag = servoAcceleration.length() / Math.max(speedMps, 1.0)
+                * 0.4 * dt;
         speedMps = Math.max(0.0, speedMps - inducedDrag);
+        // 爬升需要付出势能，避免 loft 免费获得高度。
+        speedMps = Math.max(0.0, speedMps
+                - 9.81 * newVelocity.y / Math.max(speedMps, 1.0));
 
         if (newVelocity.lengthSqr() > 1e-8) {
             newVelocity = newVelocity.normalize().scale(speedMps / 20.0);
@@ -511,6 +612,8 @@ public abstract class MissileArrow extends AbstractArrow {
         if (!(level() instanceof ServerLevel serverLevel)) return;
         Entity next = serverLevel.getEntity(state.targetId());
         if (next == null || !next.isAlive()) return;
+        if (spec.guidance == MissileSpec.Guidance.SARH
+                && !ServerRadarState.isLocked(player, next.getId())) return;
         if (targetId == null || !targetId.equals(next.getUUID())) {
             setTarget(next);
         }
@@ -528,6 +631,7 @@ public abstract class MissileArrow extends AbstractArrow {
             return;
         }
 
+        if (!datalinkValid()) return;
         if (datalinkUpdateCooldown-- > 0) return;
         datalinkUpdateCooldown = DATALINK_UPDATE_TICKS;
         if (!(getOwner() instanceof ServerPlayer player)) return;
@@ -599,7 +703,7 @@ public abstract class MissileArrow extends AbstractArrow {
             double seconds = Math.max(0, age - lastKnownTargetTick) / 20.0;
             return lastKnownTargetPos.add(lastKnownTargetVelocity.scale(seconds));
         }
-        return target == null ? null : target.getBoundingBox().getCenter();
+        return null;
     }
 
     protected Vec3 guidanceVelocity(@Nullable Entity target) {

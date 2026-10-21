@@ -4,7 +4,6 @@ import com.minethunder.MineThunder;
 import com.minethunder.missile.MissileArrow;
 import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.IrTargeting;
-import com.minethunder.missile.MissileItem;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.network.Network;
@@ -17,7 +16,6 @@ import com.minethunder.radar.RadarCore;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
@@ -114,7 +112,6 @@ public final class RadarHudClientTicker {
             RadarHud.scanElevationOffsetDeg = 0;
         }
         updateScanState(player);
-        updateClutter(mc, player);
 
         boolean anyMissileInFlight = false;
         for (Entity e : mc.level.entitiesForRendering()) {
@@ -234,7 +231,6 @@ public final class RadarHudClientTicker {
             // TRK 只管当前锁定目标：清掉通用扫描产生的其它/地面回波。
             RadarHud.contacts.clear();
             RadarHud.contactPaintTicks.clear();
-            RadarHud.clutterCells.clear();
             Entity lock = RadarHud.lockedEntity;
             RadarHud.echoes.entrySet().removeIf(e -> lock == null
                     || !RadarHud.locked
@@ -673,11 +669,15 @@ public final class RadarHudClientTicker {
             suppressLockInertial = false;
             updateLockInfo(player, target);
 
-            Vec3 relativeVelocity = target.getDeltaMovement().subtract(player.getDeltaMovement());
+            Vec3 relativeVelocity = target.getDeltaMovement()
+                    .subtract(player.getDeltaMovement()).scale(20.0);
             double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                     : relativeVelocity.dot(to.normalize());
+            double notchSeverity = RadarCore.notchSeverity(
+                    radialVelocity, range, RadarHud.currentMode);
             RadarContact contact = new RadarContact(target, range, azimuth, elevation,
-                    radialVelocity, targetPos, false, false, 0.0, targetClass);
+                    radialVelocity, targetPos, false, notchSeverity > 0.4,
+                    notchSeverity, targetClass);
             RadarEcho echo = RadarHud.echoes.get(target.getUUID());
             if (echo == null) {
                 RadarHud.echoes.put(target.getUUID(), new RadarEcho(contact, tick));
@@ -703,7 +703,7 @@ public final class RadarHudClientTicker {
         var targetPos = target.getBoundingBox().getCenter();
         var eye = player.getEyePosition();
         RadarHud.lockedDistance = eye.distanceTo(targetPos);
-        var rel = target.getDeltaMovement().subtract(player.getDeltaMovement());
+        var rel = target.getDeltaMovement().subtract(player.getDeltaMovement()).scale(20.0);
         var dir = targetPos.subtract(eye);
         if (dir.lengthSqr() > 1e-6) {
             RadarHud.lockedClosure = -rel.dot(dir.normalize()); // 正 = 接近
@@ -807,7 +807,7 @@ public final class RadarHudClientTicker {
         int now = Minecraft.getInstance().player == null
                 ? 0 : Minecraft.getInstance().player.tickCount;
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.expired(now)) continue;
+            if (echo.expired(now) || !echoAllowed(echo)) continue;
             // 手动尝试锁定必须基于最近实际扫描到的回波，而不是 9 秒内的旧记忆。
             if (now - echo.lastHitTick > 40) continue;
             if (echo.entityId == RadarHud.selectedEchoId) {
@@ -938,11 +938,10 @@ public final class RadarHudClientTicker {
     }
 
     /** 只清理锁定相关状态，不恢复模式；供 ACM 进出使用。 */
-    /** 切换模式时清空上一模式的面板接触、杂波、选中目标等旧绘制。 */
+    /** 切换模式时清空上一模式的面板接触、选中目标等旧绘制。 */
     private static void clearRadarPanelForModeChange(boolean keepLockedTarget) {
         RadarHud.contacts.clear();
         RadarHud.contactPaintTicks.clear();
-        RadarHud.clutterCells.clear();
         TwsTrackManager.clear();
         if (keepLockedTarget) {
             int keepId = RadarHud.lockedEntity.getId();
@@ -992,36 +991,20 @@ public final class RadarHudClientTicker {
         RadarHud.lastLockMessage = message;
     }
 
-    /** 从当前扫描回波中开始一次近似位置锁定。 */
-    private static void lockNearestContact() {
-        RadarEcho best = null;
-        int tick = Minecraft.getInstance().player == null ? 0 : Minecraft.getInstance().player.tickCount;
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.expired(tick)) continue;
-            if (best == null || echo.range < best.range) best = echo;
-        }
-        if (best == null) {
-            RadarHud.lastLockMessage = "无有效回波";
-            return;
-        }
-        Entity entity = TwsTrackManager.entity(best.entityId);
-        if (entity != null && entity.isAlive()) {
-            beginLockAcquisition(entity, best.azimuthDeg, best.range, best.position);
-        } else {
-            RadarHud.lastLockMessage = "无有效回波";
-        }
-    }
-
-    /** 兼容旧调用：开始尝试锁定，而不是直接硬锁。 */
-    private static void lockContact(RadarContact contact) {
-        beginLockAcquisition(contact.entity, contact.azimuthDeg, contact.distance, contact.position);
-    }
-
     private static RadarContact findContact(Entity entity) {
         for (RadarContact c : RadarHud.contacts) {
             if (c.entity == entity) return c;
         }
         return null;
+    }
+
+    private static boolean echoAllowed(RadarEcho echo) {
+        Entity entity = TwsTrackManager.entity(echo.entityId);
+        if (entity == null) return false;
+        RadarTargetClass targetClass = RadarCore.classify(entity);
+        if (targetClass == null || !RadarHud.currentMode.accepts(targetClass)) return false;
+        return RadarHud.currentMode != RadarMode.TWS
+                || targetClass == RadarTargetClass.AIR;
     }
 
     /** Alt+T：只改变面板选中目标；不锁定、不触发屏幕动作。 */
@@ -1043,7 +1026,7 @@ public final class RadarHudClientTicker {
         List<RadarEcho> valid = new ArrayList<>();
         int tick = Minecraft.getInstance().player == null ? 0 : Minecraft.getInstance().player.tickCount;
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (!echo.expired(tick)) valid.add(echo);
+            if (!echo.expired(tick) && echoAllowed(echo)) valid.add(echo);
         }
         valid.sort(java.util.Comparator.comparingDouble(e -> e.range));
         if (valid.isEmpty()) {
@@ -1070,6 +1053,7 @@ public final class RadarHudClientTicker {
             if (!RadarHud.selectionInitialized && !RadarHud.echoes.isEmpty()) {
                 RadarEcho first = null;
                 for (RadarEcho echo : RadarHud.echoes.values()) {
+                    if (!echoAllowed(echo)) continue;
                     if (first == null || echo.range < first.range) first = echo;
                 }
                 if (first != null) {
@@ -1080,7 +1064,10 @@ public final class RadarHudClientTicker {
             return;
         }
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.entityId == RadarHud.selectedEchoId) return;
+            if (echo.entityId == RadarHud.selectedEchoId) {
+                if (echoAllowed(echo)) return;
+                break;
+            }
         }
         RadarHud.selectedEchoId = -1;
     }
@@ -1155,58 +1142,6 @@ public final class RadarHudClientTicker {
         RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
                 + elevationHalf
                 - (row + 0.5) * elevationSpan / rows);
-    }
-
-    /** 仅当扫描线实际扫过地形时才留下杂波；短暂残留后消失。 */
-    private static void updateClutter(Minecraft mc, Player player) {
-        if (!RadarHud.radarOn || RadarHud.currentMode.isSurfaceSearch()
-                || (RadarHud.currentMode.isDoppler() && !RadarHud.currentMode.isSurfaceSearch())) {
-            RadarHud.clutterCells.clear();
-            return;
-        }
-
-        int now = player.tickCount;
-        RadarHud.clutterCells.removeIf(c ->
-                now - c.lastHitTick() > RadarHud.CLUTTER_MEMORY_TICKS);
-
-        Vec3 eye = player.getEyePosition();
-        double maxRange = RadarHud.effectiveRange();
-        double startAz = lastSweepRow == scanRow ? lastSweepAzimuth : RadarHud.sweepAzimuthDeg;
-        double endAz = RadarHud.sweepAzimuthDeg;
-
-        // 每条扫描线采样几个方位点，再在上下几度内采样，形成扫描拖尾。
-        for (int ai = 0; ai < 5; ai++) {
-            double az = startAz + (endAz - startAz) * ai / 4.0;
-            for (int ei = -1; ei <= 1; ei++) {
-                double el = RadarHud.sweepElevationDeg + ei * 4.0;
-                Vec3 dir = Vec3.directionFromRotation(
-                        player.getXRot() - (float) el,
-                        player.getYRot() + (float) az).normalize();
-                Vec3 end = eye.add(dir.scale(maxRange));
-                var hit = mc.level.clip(new net.minecraft.world.level.ClipContext(
-                        eye, end, net.minecraft.world.level.ClipContext.Block.COLLIDER,
-                        net.minecraft.world.level.ClipContext.Fluid.NONE,
-                        net.minecraft.world.phys.shapes.CollisionContext.empty()));
-                if (hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK) continue;
-
-                double distance = eye.distanceTo(hit.getLocation());
-                boolean merged = false;
-                for (int i = 0; i < RadarHud.clutterCells.size(); i++) {
-                    RadarHud.ClutterCell c = RadarHud.clutterCells.get(i);
-                    if (Math.abs(c.azimuthDeg() - az) < 2.0
-                            && Math.abs(c.elevationDeg() - el) < 2.0) {
-                        RadarHud.clutterCells.set(i, new RadarHud.ClutterCell(
-                                (float) az, (float) el, distance, now));
-                        merged = true;
-                        break;
-                    }
-                }
-                if (!merged) {
-                    RadarHud.clutterCells.add(new RadarHud.ClutterCell(
-                            (float) az, (float) el, distance, now));
-                }
-            }
-        }
     }
 
     /** 扫描中心：玩家视线叠加方位/仰角偏移。 */
@@ -1340,7 +1275,6 @@ public final class RadarHudClientTicker {
         RadarHud.guidanceTargetId = -1;
         RadarHud.contactPaintTicks.clear();
         RadarHud.echoes.clear();
-        RadarHud.clutterCells.clear();
         TwsTrackManager.clear();
         RadarHud.lastLockMessage = "";
         RadarHud.seekerMessage = "";

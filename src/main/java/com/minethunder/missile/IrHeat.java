@@ -29,6 +29,10 @@ public final class IrHeat {
         BOOST_START.put(player.getUUID(), player.level().getGameTime());
     }
 
+    public static void clearPlayer(Player player) {
+        BOOST_START.remove(player.getUUID());
+    }
+
     public static double heat(Entity entity) {
         if (entity instanceof Marker marker
                 && marker.getCustomName() != null

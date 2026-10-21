@@ -104,6 +104,10 @@ public final class RwrManager {
         Vec3 eye = source.getEyePosition();
         Vec3 targetPos = target.getBoundingBox().getCenter();
         if (eye.distanceTo(targetPos) > RANGE || isVerticalBlind(eye, targetPos)) return;
+        Vec3 look = source.getViewVector(1.0F).normalize();
+        double az = Math.toDegrees(RadarCore.azimuthBetween(look, targetPos.subtract(eye)));
+        double el = Math.toDegrees(RadarCore.elevationBetween(look, targetPos.subtract(eye)));
+        if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) return;
         String tag = firstLetter(source);
         long tick = source.getServer().getTickCount();
         PAINTS.computeIfAbsent(target.getUUID(), k -> new ConcurrentHashMap<>())
@@ -228,8 +232,8 @@ public final class RwrManager {
                                       String tag, int age) {
         Vec3 dir = to.normalize();
         return new RwrContact(sourceId, threat,
-                RadarCore.azimuthBetween(look, dir),
-                RadarCore.elevationBetween(look, dir),
+                Math.toDegrees(RadarCore.azimuthBetween(look, dir)),
+                Math.toDegrees(RadarCore.elevationBetween(look, dir)),
                 distance, tag == null ? "" : tag, age);
     }
 

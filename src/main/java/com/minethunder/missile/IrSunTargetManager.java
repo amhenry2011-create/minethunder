@@ -9,6 +9,7 @@ import net.minecraft.world.entity.Marker;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.Map;
@@ -30,7 +31,12 @@ public final class IrSunTargetManager {
             if (level.getGameTime() % 10 != 0) continue;
             for (ServerPlayer player : level.players()) {
                 Marker marker = MARKERS.get(player.getUUID());
-                if (marker == null || marker.isRemoved() || marker.level() != level) {
+                if (marker != null && (marker.isRemoved() || marker.level() != level)) {
+                    marker.discard();
+                    MARKERS.remove(player.getUUID());
+                    marker = null;
+                }
+                if (marker == null) {
                     marker = EntityType.MARKER.create(level);
                     if (marker == null) continue;
                     marker.setCustomName(Component.literal(PREFIX + player.getUUID()));
@@ -49,5 +55,11 @@ public final class IrSunTargetManager {
                 marker.setDeltaMovement(Vec3.ZERO);
             }
         }
+    }
+
+    @SubscribeEvent
+    public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
+        Marker marker = MARKERS.remove(event.getEntity().getUUID());
+        if (marker != null) marker.discard();
     }
 }

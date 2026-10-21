@@ -33,9 +33,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class BlockRadarTargetManager {
     private BlockRadarTargetManager() {}
 
-    private static final int SCAN_INTERVAL = 20;
+    private static final int SCAN_INTERVAL = 40;
     private static final int SCAN_CHUNK_RADIUS = 1;
-    private static final int STATIC_Y_RADIUS = 8;
+    private static final int STATIC_Y_RADIUS = 6;
     private static final Map<UUID, Marker> MARKERS = new ConcurrentHashMap<>();
 
     private record BlockCluster(BlockPos center, boolean moving, RadarTargetClass targetClass,

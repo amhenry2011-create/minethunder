@@ -26,13 +26,18 @@ public final class ServerRadarState {
     public static void update(ServerPlayer player, int targetId, int seekerState,
                               int radarMode, boolean hardLock, boolean radarOn,
                               float trackQuality) {
-        if (!radarOn && targetId < 0) {
+        if (!radarOn) {
             LOCKS.remove(player.getUUID());
-        } else {
-            LOCKS.put(player.getUUID(), new LockState(targetId, seekerState, radarMode,
-                    hardLock, radarOn, player.serverLevel().getGameTime(),
-                    Math.max(0.0f, Math.min(1.0f, trackQuality))));
+            return;
         }
+        int safeTarget = Math.max(-1, targetId);
+        int safeSeeker = Math.max(-1, Math.min(3, seekerState));
+        int safeMode = Math.max(0,
+                Math.min(RadarMode.values().length - 1, radarMode));
+        float safeQuality = Float.isFinite(trackQuality)
+                ? Math.max(0.0f, Math.min(1.0f, trackQuality)) : 0.0f;
+        LOCKS.put(player.getUUID(), new LockState(safeTarget, safeSeeker, safeMode,
+                hardLock, true, player.serverLevel().getGameTime(), safeQuality));
     }
 
     public static LockState get(Player player) {
@@ -47,7 +52,7 @@ public final class ServerRadarState {
 
     public static Entity getTarget(Player player) {
         LockState state = get(player);
-        if (state == null) return null;
+        if (state == null || !state.radarOn() || state.targetId() < 0) return null;
         if (player.level() instanceof ServerLevel serverLevel) {
             return serverLevel.getEntity(state.targetId());
         }
@@ -68,13 +73,14 @@ public final class ServerRadarState {
 
     public static boolean isLocked(Player player, int targetId) {
         LockState state = get(player);
-        return state != null && state.hardLock() && state.targetId() == targetId;
+        return state != null && state.radarOn() && state.hardLock()
+                && state.targetId() == targetId;
     }
 
     /** 主动雷达弹：TWS 软跟踪目标或硬锁定目标即可发射；导引头对准只作视觉。 */
     public static boolean canLaunchArh(Player player) {
         LockState state = get(player);
-        if (state == null || state.targetId() < 0) return false;
+        if (state == null || !state.radarOn() || state.targetId() < 0) return false;
         return state.radarMode() == RadarMode.TWS.ordinal() || state.hardLock();
     }
 
@@ -82,6 +88,7 @@ public final class ServerRadarState {
     public static boolean canLaunchSarh(Player player) {
         LockState state = get(player);
         return state != null
+                && state.radarOn()
                 && state.hardLock()
                 && state.seekerState() >= SeekerLockModel.State.TRACKING.ordinal();
     }

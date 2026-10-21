@@ -90,11 +90,8 @@ public final class RadarHudRenderer {
             g.fill(px + 1, y, right - 1, y + 1, GRID);
         }
         // 扫描指示：与主画面共用同一条方位扫描线
-        Minecraft mcRef = Minecraft.getInstance();
-        int ticks = mcRef.player == null ? 0 : mcRef.player.tickCount;
         int sweepX = cx + Math.round((float) (RadarHud.sweepAzimuthDeg / RadarHud.PANEL_AZIMUTH_DEG * (size / 2.0)));
         sweepX = Math.max(px + 1, Math.min(right - 2, sweepX));
-        drawClutter(g, px, py, size, ticks);
         boolean trackingView = RadarHud.currentMode == RadarMode.TWS
                 || RadarHud.currentMode == RadarMode.STT;
         if (!trackingView) {
@@ -158,9 +155,12 @@ public final class RadarHudRenderer {
 
         for (RadarEcho echo : RadarHud.echoes.values()) {
             if (echo.expired(nowTick)) continue;
-            if (!RadarHud.currentMode.accepts(echo.targetClass)) continue;
+            Entity entity = mc.level == null ? null : mc.level.getEntity(echo.entityId);
+            com.minethunder.radar.RadarTargetClass currentClass =
+                    entity == null ? null : RadarCore.classify(entity);
+            if (currentClass == null || !RadarHud.currentMode.accepts(currentClass)) continue;
             if (RadarHud.currentMode == RadarMode.TWS
-                    && echo.targetClass != com.minethunder.radar.RadarTargetClass.AIR) continue;
+                    && currentClass != com.minethunder.radar.RadarTargetClass.AIR) continue;
             // 面板只显示最后一次扫描命中的位置，扫描线未命中时不继续预测/刷新。
             double az = echo.azimuthDeg;
             double dist = echo.range;
@@ -744,23 +744,6 @@ public final class RadarHudRenderer {
                 x0, Math.max(4, yTop - 12), 0x806BFF6B, false);
     }
 
-    private static void drawClutter(GuiGraphics g, int px, int py, int size, int ticks) {
-        if (RadarHud.currentMode.isSurfaceSearch()
-                || (RadarHud.currentMode.isDoppler()
-                && !RadarHud.currentMode.isSurfaceSearch())
-                || RadarHud.clutterCells.isEmpty()) return;
-        int cell = Math.max(5, size / 45);
-        double range = Math.max(RadarHud.effectiveRange(), 1.0);
-        for (RadarHud.ClutterCell c : RadarHud.clutterCells) {
-            if (ticks - c.lastHitTick() > RadarHud.CLUTTER_MEMORY_TICKS) continue;
-            float[] p = RadarHud.project(c.azimuthDeg(), c.distance(), range, size);
-            int x = px + (int) p[0];
-            int y = py + (int) p[1];
-            if (x < px + 2 || x > px + size - 3 || y < py + 12 || y > py + size - 3) continue;
-            g.fill(x - cell / 2, y - cell / 2, x + cell / 2, y + cell / 2, 0xCC66FF66);
-        }
-    }
-
     private static void renderTopInfo(GuiGraphics g, int w, int h) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
@@ -840,9 +823,13 @@ public final class RadarHudRenderer {
         g.fill(cx, y + 8, cx + 1, y + 14, 0xFF9AA59A);
     }
 
-    /** 雷达关闭时只绘制 RWR，不受雷达 HUD 开关影响。 */
+    /** 雷达关闭时仍绘制 RWR 和独立的 IR 导引头环。 */
     public static void renderRwrOnly(GuiGraphics g, int w, int h) {
         renderRwr(g, w, h);
+        if (RadarHud.seekerEnabled
+                && RadarHud.selectedMissile == MissileSpec.Guidance.IR) {
+            renderCenterRings(g, w, h);
+        }
     }
 
     private static void renderRwr(GuiGraphics g, int w, int h) {

@@ -40,7 +40,7 @@ public final class MissileSpec {
     public final double prolongationTimeMax;
 
     // ---- 飞行性能（CDK 变量） ----
-    /** 初始速度 startSpeed（m/s），0 = 继承载机速度 */
+    /** 初始相对速度 startSpeed（m/s），0 = 载机速度 + 20 m/s 弹射 */
     public final double startSpeed;
     /** 气动最大速度 endSpeed（m/s） */
     public final double endSpeed;
@@ -111,15 +111,10 @@ public final class MissileSpec {
     /** 当前制导视场：SARH/ARH 中段使用弹体可用转向角，ARH 末段/IR 使用导引头 FOV。 */
     public double guidanceFovDeg(boolean pitbullActive) {
         return switch (guidance) {
-            case SARH -> angleMaxDeg;
+            case SARH -> seekerFovDeg;
             case ARH -> pitbullActive ? seekerFovDeg : angleMaxDeg;
             case IR -> seekerFovDeg;
         };
-    }
-
-    /** 发射时初始速度：若 startSpeed 为 0 则继承载机速度 */
-    public double initialSpeed(double carrierSpeed) {
-        return startSpeed > 0 ? startSpeed : carrierSpeed;
     }
 
     /** 发射时导引头可捕获目标的距离：红外用全向锁定距离，雷达弹用锁定距离 */
@@ -130,14 +125,22 @@ public final class MissileSpec {
         return allAspectLockRange > 0 ? allAspectLockRange : 50000.0;
     }
 
-    /** 动力段推力加速度（m/s²）：F / m */
-    public double boostAcceleration() {
-        return force / Math.max(massEnd, 1.0);
+    /** 当前质量（kg）：动力段按时间从 mass 线性降到 massEnd。 */
+    public double massAt(double t) {
+        if (timeFire <= 0.0) return massEnd;
+        double fraction = Math.max(0.0, Math.min(1.0,
+                (t - ignitionDelay()) / timeFire));
+        return mass + (massEnd - mass) * fraction;
     }
 
-    /** 滑翔段阻力减速度（m/s²），随速度平方增长（简化模型） */
-    public double dragDeceleration(double speed) {
-        return Math.min(80.0, cxK * speed * speed / 50.0);
+    /** 动力段推力加速度（m/s²）：F / 当前质量。 */
+    public double boostAcceleration(double t) {
+        return force / Math.max(massAt(t), 1.0);
+    }
+
+    /** 滑翔段阻力减速度（m/s²），随速度平方增长（简化模型）。 */
+    public double dragDeceleration(double speed, double mass) {
+        return Math.min(80.0, cxK * speed * speed / Math.max(mass, 1.0) * 10.0);
     }
 
     /** 最大可用侧向加速度（m/s²）：G 限制 */

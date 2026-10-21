@@ -189,14 +189,6 @@ public final class RadarHud {
     public static final int CONTACT_MEMORY_TICKS = 180;
     /** 已扫描命中的回波记忆（用于点亮、惯性外推与切换） */
     public static final Map<UUID, RadarEcho> echoes = new HashMap<>();
-    /** 扫描线命中后的地形杂波保留 tick 数 */
-    public static final int CLUTTER_MEMORY_TICKS = 30;
-    /** 地形杂波单元：方位、俯仰、距离、最后被扫描命中 tick */
-    public record ClutterCell(float azimuthDeg, float elevationDeg, double distance,
-                              int lastHitTick) {}
-    /** 仅保留扫描线实际扫过的地形杂波，不再预生成整片杂波。 */
-    public static final List<ClutterCell> clutterCells = new ArrayList<>();
-
     /** 导弹发射后的雷达面板引导线 */
     public static boolean guidanceLineActive = false;
     public static int guidanceTargetId = -1;

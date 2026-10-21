@@ -36,6 +36,8 @@ public final class MissileEvents {
         if (event.getEntity() instanceof ServerPlayer player) {
             ServerRadarState.clear(player);
             SensorDebugState.clear(player);
+            com.minethunder.network.CountermeasurePacket.clearCooldown(player);
+            IrHeat.clearPlayer(player);
         }
     }
 
@@ -54,8 +56,8 @@ public final class MissileEvents {
                 event.setCanceled(true);
                 return;
             }
-            var target = MissileTargeting.findLookTarget(
-                    player.level(), player, spec.acquireRange(), spec.lockAngleMaxDeg);
+            var target = IrTargeting.findTarget(
+                    player.level(), player, null, spec);
             if (target == null) {
                 event.setCanceled(true);
             }

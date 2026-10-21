@@ -1,5 +1,6 @@
 package com.minethunder.client;
 
+import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarTargetClass;
 import net.minecraft.world.entity.Entity;
 
@@ -20,11 +21,12 @@ public final class TwsTrackManager {
     public static void update(int tick) {
         if (current != null) {
             RadarEcho echo = RadarHud.echoes.get(current.uuid);
-            if (echo == null || echo.expired(tick)
-                    || echo.targetClass != RadarTargetClass.AIR
-                    || !isAlive(current.entityId)) {
+            if (echo == null || echo.expired(tick) || !isAir(current.entityId)) {
                 clear();
             } else {
+                if (echo.lastHitTick > current.lastPaintTick) {
+                    current.hits++;
+                }
                 current.lastPosition = echo.position;
                 current.velocity = echo.velocity;
                 current.range = echo.range;
@@ -33,7 +35,7 @@ public final class TwsTrackManager {
                 current.closure = echo.closure;
                 current.lastPaintTick = echo.lastHitTick;
                 current.lastUpdateTick = tick;
-                current.confirmed = true;
+                current.confirmed = current.hits >= 2;
                 selectedId = current.entityId;
             }
         }
@@ -45,8 +47,7 @@ public final class TwsTrackManager {
     private static void selectNearest() {
         RadarEcho best = null;
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.expired(currentTick())
-                    || echo.targetClass != RadarTargetClass.AIR) continue;
+            if (echo.expired(currentTick()) || !isAir(echo.entityId)) continue;
             if (best == null || echo.range < best.range) best = echo;
         }
         if (best != null) setCurrent(best);
@@ -55,7 +56,6 @@ public final class TwsTrackManager {
     private static void setCurrent(RadarEcho echo) {
         current = new TwsTrack(echo.uuid, echo.entityId, echo.position, echo.velocity,
                 echo.range, echo.azimuthDeg, echo.elevationDeg, echo.closure, echo.lastHitTick);
-        current.confirmed = true;
         selectedId = current.entityId;
     }
 
@@ -76,8 +76,7 @@ public final class TwsTrackManager {
     public static void cycle() {
         List<RadarEcho> valid = new ArrayList<>();
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (!echo.expired(currentTick())
-                    && echo.targetClass == RadarTargetClass.AIR) valid.add(echo);
+            if (!echo.expired(currentTick()) && isAir(echo.entityId)) valid.add(echo);
         }
         valid.sort(Comparator.comparingDouble(e -> e.range));
         if (valid.isEmpty()) {
@@ -104,8 +103,9 @@ public final class TwsTrackManager {
         return mc.level == null ? null : mc.level.getEntity(entityId);
     }
 
-    private static boolean isAlive(int entityId) {
+    private static boolean isAir(int entityId) {
         Entity entity = entity(entityId);
-        return entity != null && entity.isAlive();
+        return entity != null && entity.isAlive()
+                && RadarCore.classify(entity) == RadarTargetClass.AIR;
     }
 }

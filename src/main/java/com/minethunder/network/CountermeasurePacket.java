@@ -7,6 +7,7 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
@@ -45,6 +46,11 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
         COOLDOWNS.put(player.getUUID(), now + 2);
 
         if (kind == 3) {
+            if (!hasItem(player, Items.SNOWBALL) || !hasItem(player, Items.FIRE_CHARGE)) {
+                return;
+            }
+            consume(player, Items.SNOWBALL);
+            consume(player, Items.FIRE_CHARGE);
             spawn(player, Countermeasure.CHAFF);
             spawn(player, Countermeasure.FLARE);
         } else {
@@ -53,8 +59,46 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
                 case 2 -> Countermeasure.ECM;
                 default -> Countermeasure.CHAFF;
             };
+            Item required = switch (countermeasure) {
+                case FLARE -> Items.FIRE_CHARGE;
+                case ECM -> Items.GUNPOWDER;
+                case CHAFF -> Items.SNOWBALL;
+            };
+            if (!consume(player, required)) return;
             spawn(player, countermeasure);
         }
+    }
+
+    public static void clearCooldown(ServerPlayer player) {
+        COOLDOWNS.remove(player.getUUID());
+    }
+
+    private static boolean hasItem(ServerPlayer player, Item item) {
+        for (ItemStack stack : player.getInventory().items) {
+            if (stack.is(item) && !stack.isEmpty()) return true;
+        }
+        for (ItemStack stack : player.getInventory().offhand) {
+            if (stack.is(item) && !stack.isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private static boolean consume(ServerPlayer player, Item item) {
+        for (int i = 0; i < player.getInventory().items.size(); i++) {
+            ItemStack stack = player.getInventory().items.get(i);
+            if (stack.is(item) && !stack.isEmpty()) {
+                stack.shrink(1);
+                return true;
+            }
+        }
+        for (int i = 0; i < player.getInventory().offhand.size(); i++) {
+            ItemStack stack = player.getInventory().offhand.get(i);
+            if (stack.is(item) && !stack.isEmpty()) {
+                stack.shrink(1);
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void spawn(ServerPlayer player, Countermeasure kind) {
