@@ -327,8 +327,13 @@ public final class RadarHudRenderer {
             return;
         }
 
-        int ox = px + size / 2;
-        int oy = py + size - Math.max(6, (int) Math.round(size * 0.025));
+        float[] missile = RadarHud.project((float) RadarHud.guidanceMissileAzimuthDeg,
+                RadarHud.guidanceMissileDistance, range, size);
+        int ox = px + (int) missile[0];
+        int oy = py + (int) missile[1];
+        if (ox < px + 2 || ox > px + size - 3 || oy < py + 12 || oy > py + size - 3) {
+            return;
+        }
         double gapFraction = -1;
         if (RadarHud.guidanceIsArh && RadarHud.guidancePitbullRange > 0
                 && RadarHud.guidanceTargetDistance > RadarHud.guidancePitbullRange) {
@@ -470,7 +475,7 @@ public final class RadarHudRenderer {
         // 红外弹外环画得更大，不为了保证完整显示而缩小；超出屏幕被裁掉即可。
         if (!radarGuided) {
             outerR = Math.max(144, (int) Math.round(outerR * 6.0));
-            innerR = Math.max(12, Math.round(LOCK_BOX_HALF * ui));
+            innerR = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
         } else {
             innerR = Math.max(8, Math.min(innerR, Math.max(24, screenH / 2 - 8)));
         }

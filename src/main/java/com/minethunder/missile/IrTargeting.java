@@ -26,7 +26,8 @@ public final class IrTargeting {
     public static Entity findTarget(Level level, Player shooter, @Nullable Entity radarLock,
                                     MissileSpec spec) {
         List<Entity> candidates = new ArrayList<>();
-        AABB area = shooter.getBoundingBox().inflate(spec.acquireRange());
+        AABB area = shooter.getBoundingBox().inflate(
+                Math.max(spec.acquireRange(), spec.rearAspectLockRange));
         for (LivingEntity living : level.getEntitiesOfClass(LivingEntity.class, area,
                 e -> e != shooter && e.isAlive())) {
             candidates.add(living);
@@ -39,9 +40,10 @@ public final class IrTargeting {
                 FireworkRocketEntity::isAlive)) {
             candidates.add(firework);
         }
-        for (Marker marker : level.getEntitiesOfClass(Marker.class, area,
-                m -> m.isAlive() && m.getCustomName() != null
-                        && m.getCustomName().getString().startsWith("mt_heat_sun_"))) {
+        // 太阳 Marker 在 64 b，大于普通 IR 全向锁定距离，单独查询。
+        for (Marker marker : level.getEntitiesOfClass(Marker.class,
+                shooter.getBoundingBox().inflate(256.0),
+                m -> m.isAlive() && isSunMarker(m))) {
             candidates.add(marker);
         }
 
@@ -70,28 +72,39 @@ public final class IrTargeting {
         if (target == null || !target.isAlive() || target == shooter) return false;
         if (IrHeat.heat(target) < HEAT_THRESHOLD) return false;
 
+        boolean sun = isSunMarker(target);
         Vec3 eye = shooter.getEyePosition();
         Vec3 pos = target.getBoundingBox().getCenter();
         Vec3 to = pos.subtract(eye);
         double distance = to.length();
-        if (distance < 0.1 || distance > maxRange(shooter, target, spec)) return false;
+        if (distance < 0.1 || (!sun && distance > maxRange(shooter, target, spec))) return false;
 
         Vec3 look = shooter.getViewVector(1.0F).normalize();
         double angle = Math.toDegrees(Math.acos(clamp(look.dot(to.normalize()), -1.0, 1.0)));
         if (angle > spec.lockAngleMaxDeg) return false;
 
         RadarTargetClass cls = RadarCore.classify(target);
-        return !RadarCore.isOccludedForTarget(level, eye, pos, cls);
+        return sun || !RadarCore.isOccludedForTarget(level, eye, pos, cls);
     }
 
     public static double heat(Entity entity) {
         return IrHeat.heat(entity);
     }
 
+    public static boolean isSunMarker(Entity entity) {
+        return entity instanceof Marker marker
+                && marker.getCustomName() != null
+                && marker.getCustomName().getString().startsWith("mt_heat_sun_");
+    }
+
     private static double maxRange(Player shooter, Entity target, MissileSpec spec) {
         Vec3 to = target.getBoundingBox().getCenter().subtract(shooter.getEyePosition());
         if (to.lengthSqr() < 1.0E-6) return spec.allAspectLockRange;
         double closing = target.getDeltaMovement().dot(to.normalize());
+        // 高温目标（着火/烟花/热焰弹）使用后半球距离，避免近距离全向距离过短。
+        if (IrHeat.heat(target) >= IrHeat.THRESHOLD + 40.0) {
+            return spec.rearAspectLockRange;
+        }
         // 目标正在远离时使用后半球距离，其余使用全向距离。
         return closing > 0.02 ? spec.rearAspectLockRange : spec.allAspectLockRange;
     }

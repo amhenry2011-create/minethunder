@@ -209,6 +209,8 @@ public final class RadarHud {
     public static boolean guidanceIsArh = false;
     public static Vec3 guidanceLastWorldPosition = Vec3.ZERO;
 
+    /** 红外锁定内圈的逻辑/绘制基准半径（UI 缩放前）。 */
+    public static final int IR_LOCK_RING_BASE = 28;
     /** 红外导引头是否开机。 */
     public static boolean seekerActive = false;
     /** 红外导引头当前候选/锁定目标。 */

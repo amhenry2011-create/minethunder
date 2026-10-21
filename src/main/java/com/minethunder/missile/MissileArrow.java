@@ -288,7 +288,8 @@ public abstract class MissileArrow extends AbstractArrow {
 
         // 近炸引信：靠近目标或有效假目标一定距离即引爆
         Entity fuseTarget = decoy != null ? decoy : getTarget();
-        if (!level().isClientSide && fuseTarget != null && fuseTarget.isAlive()) {
+        if (!level().isClientSide && fuseTarget != null && fuseTarget.isAlive()
+                && !IrTargeting.isSunMarker(fuseTarget)) {
             double d = pos.distanceTo(fuseTarget.getBoundingBox().getCenter());
             if (d <= spec.proximityFuseRadius) {
                 detonate(fuseTarget);
@@ -396,10 +397,12 @@ public abstract class MissileArrow extends AbstractArrow {
         if (speedMps < 1.0) return;
         Vec3 velDir = velocity.normalize();
 
-        // rateMax 作为导引头 LOS 跟踪上限：目标角速度过快时，导引头视线滞后。
-        boolean seekerLimited = spec.guidance == MissileSpec.Guidance.IR
+        // 有载机数据链时，PN/APN 直接使用数据链目标；rateMax 只限制无数据链时的导引头。
+        boolean hasDatalink = datalinkValid();
+        boolean seekerLimited = !hasDatalink
+                && (spec.guidance == MissileSpec.Guidance.IR
                 || spec.guidance == MissileSpec.Guidance.SARH
-                || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive);
+                || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive));
         if (seekerLimited) {
             if (guidanceLosDir == null) {
                 guidanceLosDir = losDir;
@@ -413,7 +416,8 @@ public abstract class MissileArrow extends AbstractArrow {
 
         // 制导视场限制：雷达弹中段使用弹体可用转向角，ARH 末段才收紧到导引头 FOV。
         double angle = Math.toDegrees(Math.acos(clamp(velDir.dot(losDir), -1, 1)));
-        if (angle > spec.guidanceFovDeg(pitbullActive)) {
+        double allowedFov = hasDatalink ? spec.angleMaxDeg : spec.guidanceFovDeg(pitbullActive);
+        if (angle > allowedFov) {
             return;
         }
 

@@ -19,6 +19,8 @@ public class SarhMissileArrow extends MissileArrow {
     private int lostLockTicks;
     /** 测试弹可绕过真实载机照射，直接追测试目标。 */
     private boolean testGuided;
+    /** 本 tick 是否仍有有效的载机照射。 */
+    private boolean illuminated;
 
     public SarhMissileArrow(EntityType<? extends MissileArrow> type, Level level, MissileSpec spec) {
         super(type, level, spec);
@@ -53,6 +55,7 @@ public class SarhMissileArrow extends MissileArrow {
                 && shooter.distanceTo(target) <= spec.maxDistance
                 && !RadarCore.isOccludedForTarget(shooter.level(), eye, targetPos,
                         RadarCore.classify(target));
+        this.illuminated = illuminated;
         if (illuminated) {
             lostLockTicks = 0;
             return target;
@@ -65,5 +68,10 @@ public class SarhMissileArrow extends MissileArrow {
             return null;
         }
         return target;
+    }
+
+    @Override
+    protected boolean datalinkValid() {
+        return illuminated && super.datalinkValid();
     }
 }

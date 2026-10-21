@@ -119,8 +119,7 @@ public final class RadarHudClientTicker {
         boolean anyMissileInFlight = false;
         for (Entity e : mc.level.entitiesForRendering()) {
             if (e instanceof MissileArrow arrow) {
-                Entity owner = arrow.getOwner();
-                if (owner == null || owner == player) {
+                if (arrow.getOwner() == player) {
                     anyMissileInFlight = true;
                 }
             }
@@ -440,7 +439,7 @@ public final class RadarHudClientTicker {
         }
 
         float ui = HudScale.factor(sw, sh);
-        double smallRadius = Math.max(12, Math.round(18 * ui));
+        double smallRadius = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
 
         // 雷达硬锁定可牵引导引头小圈；否则 IR 不会自动追向候选目标，必须由玩家把目标套进小圈。
         if (aimScreen != null) {
@@ -518,6 +517,10 @@ public final class RadarHudClientTicker {
     /** 记录发射瞬间的引导目标与主动弹开机距离。 */
     private static void startGuidanceLine() {
         Entity target = RadarHud.lockedEntity;
+        if (target == null && RadarHud.currentMode == RadarMode.TWS) {
+            TwsTrack track = TwsTrackManager.selected();
+            target = track == null ? null : TwsTrackManager.entity(track.entityId);
+        }
         if (target == null) {
             RadarHud.guidanceLineActive = false;
             return;
@@ -577,7 +580,8 @@ public final class RadarHudClientTicker {
             return;
         }
         // 失锁后冻结惯性位置；只有玩家重新锁定才恢复实时目标更新。
-        Entity target = RadarHud.locked && RadarHud.guidanceTargetId >= 0
+        // 引导线端点跟目标实体；目标失锁后仍保留最后位置。
+        Entity target = RadarHud.guidanceTargetId >= 0
                 ? mc.level.getEntity(RadarHud.guidanceTargetId) : null;
         if (target != null) {
             pos = target.getBoundingBox().getCenter();

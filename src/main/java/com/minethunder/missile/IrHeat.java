@@ -7,6 +7,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Marker;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 
@@ -18,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class IrHeat {
     private IrHeat() {}
 
-    public static final double THRESHOLD = 130.0;
+    public static final double THRESHOLD = 100.0;
     private static final double PLAYER_BASE = 120.0;
     private static final double FIREWORK_BOOST = 120.0;
     private static final long BOOST_DURATION_TICKS = 200L;
@@ -40,9 +41,18 @@ public final class IrHeat {
             return 200.0;
         }
         if (entity instanceof LivingEntity living) {
-            double heat = living instanceof Player ? PLAYER_BASE
-                    : living instanceof Monster ? 100.0
-                    : living instanceof Animal ? 70.0 : 60.0;
+            double heat;
+            if (living instanceof Player) {
+                heat = PLAYER_BASE;
+            } else if (living.getType().is(EntityTypeTags.UNDEAD)) {
+                heat = 30.0;
+            } else if (living instanceof Monster) {
+                heat = 90.0;
+            } else if (living instanceof Animal) {
+                heat = 70.0;
+            } else {
+                heat = 60.0;
+            }
             if (living instanceof Player player) {
                 Long start = BOOST_START.get(player.getUUID());
                 if (start != null) {
@@ -55,7 +65,7 @@ public final class IrHeat {
                     }
                 }
             }
-            if (living.isOnFire()) heat += 60.0;
+            if (living.isOnFire()) heat += 80.0;
             return heat;
         }
         return 0.0;
