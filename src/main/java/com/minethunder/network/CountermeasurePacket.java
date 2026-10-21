@@ -9,7 +9,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.Map;
@@ -45,15 +44,15 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
         COOLDOWNS.put(player.getUUID(), now + 2);
 
         if (kind == 3) {
-            spawn(player, Countermeasure.CHAFF);
-            spawn(player, Countermeasure.FLARE);
+            spawnBurst(player, Countermeasure.CHAFF);
+            spawnBurst(player, Countermeasure.FLARE);
         } else {
             Countermeasure countermeasure = switch (kind) {
                 case 1 -> Countermeasure.FLARE;
                 case 2 -> Countermeasure.ECM;
                 default -> Countermeasure.CHAFF;
             };
-            spawn(player, countermeasure);
+            spawnBurst(player, countermeasure);
         }
     }
 
@@ -61,19 +60,25 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
         COOLDOWNS.remove(player.getUUID());
     }
 
+    private static void spawnBurst(ServerPlayer player, Countermeasure kind) {
+        for (int i = 0; i < 3; i++) {
+            spawn(player, kind);
+        }
+    }
+
     private static void spawn(ServerPlayer player, Countermeasure kind) {
-        Vec3 look = player.getViewVector(1.0F).normalize();
         CountermeasureEntity entity = new CountermeasureEntity(
                 Registration.COUNTERMEASURE.get(), player.serverLevel());
-        entity.setPos(player.getX() + look.x * 1.0, player.getEyeY() - 0.1,
-                player.getZ() + look.z * 1.0);
+        entity.setPos(player.getX() + player.getRandom().nextDouble() * 0.8 - 0.4,
+                player.getY() + 0.2,
+                player.getZ() + player.getRandom().nextDouble() * 0.8 - 0.4);
         entity.setOwner(player);
         entity.setItem(new ItemStack(kind == Countermeasure.FLARE ? Items.FIRE_CHARGE
                 : kind == Countermeasure.ECM ? Items.GUNPOWDER : Items.SNOWBALL));
-        entity.setDeltaMovement(look.scale(0.7).add(
-                player.getRandom().nextDouble() * 0.2 - 0.1,
-                player.getRandom().nextDouble() * 0.12,
-                player.getRandom().nextDouble() * 0.2 - 0.1));
+        entity.setDeltaMovement(
+                player.getRandom().nextDouble() * 0.28 - 0.14,
+                0.35 + player.getRandom().nextDouble() * 0.2,
+                player.getRandom().nextDouble() * 0.28 - 0.14);
         player.serverLevel().addFreshEntity(entity);
     }
 }
