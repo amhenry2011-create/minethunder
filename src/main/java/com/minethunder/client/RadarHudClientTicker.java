@@ -13,6 +13,7 @@ import com.minethunder.radar.RadarContact;
 import com.minethunder.radar.RadarMode;
 import com.minethunder.radar.RadarTargetClass;
 import com.minethunder.radar.RadarCore;
+import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
@@ -421,20 +422,15 @@ public final class RadarHudClientTicker {
             RadarHud.irAimInitialized = true;
         }
 
-        Entity radarLock = RadarHud.locked && RadarHud.lockedEntity != null
-                ? RadarHud.lockedEntity : null;
-        if (radarLock != null && !IrTargeting.valid(mc.level, player, radarLock,
-                RadarHud.selectedSpec)) {
-            radarLock = null;
-        }
+        Entity radarAim = radarAssistTarget(player);
 
         Entity lockedTarget = RadarHud.irLocked ? RadarHud.seekerLockedEntity : null;
         if (lockedTarget == null && RadarHud.irLocked) {
             clearIrLock();
         }
         if (lockedTarget != null) {
-            boolean sameAsRadar = radarLock == null
-                    || radarLock.getId() == lockedTarget.getId();
+            boolean sameAsRadar = radarAim == null
+                    || radarAim.getId() == lockedTarget.getId();
             if (!sameAsRadar || !lockedTarget.isAlive()
                     || !IrTargeting.valid(mc.level, player, lockedTarget,
                     RadarHud.selectedSpec)) {
@@ -444,12 +440,12 @@ public final class RadarHudClientTicker {
         }
 
         Entity target = lockedTarget != null ? lockedTarget
-                : (radarLock != null ? radarLock
+                : (radarAim != null ? radarAim
                 : IrTargeting.findTarget(mc.level, player, null,
                 RadarHud.selectedSpec));
         RadarHud.irCandidate = target;
 
-        Entity aimTarget = radarLock != null ? radarLock : lockedTarget;
+        Entity aimTarget = radarAim != null ? radarAim : lockedTarget;
         float ui = HudScale.factor(sw, sh);
         double smallRadius = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
 
@@ -476,11 +472,11 @@ public final class RadarHudClientTicker {
 
         if (target == null) {
             clearIrLock();
-            if (radarLock == null) {
+            if (radarAim == null) {
                 RadarHud.irAimX = sw / 2.0f;
                 RadarHud.irAimY = sh / 2.0f;
             }
-            RadarHud.irStatus = radarLock != null ? "截获" : "搜索";
+            RadarHud.irStatus = radarAim != null ? "雷达辅助" : "搜索";
             return;
         }
 
@@ -488,11 +484,11 @@ public final class RadarHudClientTicker {
                 target.getBoundingBox().getCenter(), player, sw, sh);
         if (targetScreen == null) {
             clearIrLock();
-            if (radarLock == null) {
+            if (radarAim == null) {
                 RadarHud.irAimX = sw / 2.0f;
                 RadarHud.irAimY = sh / 2.0f;
             }
-            RadarHud.irStatus = radarLock != null ? "截获" : "搜索";
+            RadarHud.irStatus = radarAim != null ? "雷达辅助" : "搜索";
             return;
         }
 
@@ -514,7 +510,9 @@ public final class RadarHudClientTicker {
         double targetDistance = Math.hypot(
                 targetScreen[0] - RadarHud.irAimX,
                 targetScreen[1] - RadarHud.irAimY);
-        if (targetDistance <= smallRadius) {
+        boolean validTarget = IrTargeting.valid(mc.level, player, target,
+                RadarHud.selectedSpec);
+        if (targetDistance <= smallRadius && validTarget) {
             RadarHud.irLockTicks++;
             RadarHud.irStatus = RadarHud.irLockTicks >= 20 ? "锁定" : "追踪";
             if (RadarHud.irLockTicks >= 20) {
@@ -526,8 +524,22 @@ public final class RadarHudClientTicker {
             RadarHud.irLockTicks = 0;
             RadarHud.irLocked = false;
             RadarHud.seekerLockedEntity = null;
-            RadarHud.irStatus = "截获";
+            RadarHud.irStatus = radarAim != null ? "雷达辅助" : "截获";
         }
+    }
+
+    @Nullable
+    private static Entity radarAssistTarget(Player player) {
+        if (RadarHud.locked && RadarHud.lockedEntity != null
+                && RadarHud.lockedEntity.isAlive()) {
+            return RadarHud.lockedEntity;
+        }
+        if (RadarHud.currentMode == RadarMode.TWS) {
+            TwsTrack track = TwsTrackManager.selected();
+            Entity entity = track == null ? null : TwsTrackManager.entity(track.entityId);
+            if (entity != null && entity.isAlive()) return entity;
+        }
+        return null;
     }
 
     private static void clearIrLock() {

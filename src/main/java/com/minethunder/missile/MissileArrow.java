@@ -819,7 +819,22 @@ public abstract class MissileArrow extends AbstractArrow {
                 other.detonate(null);
             }
             if (!testMissile) {
-                level().explode(this, getX(), getY(), getZ(), EXPLOSION_RADIUS, Level.ExplosionInteraction.NONE);
+                if (target instanceof LivingEntity living) {
+                    living.hurt(level().damageSources().explosion(this, getOwner()),
+                            EXPLOSION_DAMAGE);
+                }
+                level().explode(this,
+                        level().damageSources().explosion(this, getOwner()),
+                        new net.minecraft.world.level.ExplosionDamageCalculator() {
+                            @Override
+                            public boolean shouldDamageEntity(
+                                    net.minecraft.world.level.Explosion explosion,
+                                    Entity entity) {
+                                return false;
+                            }
+                        },
+                        getX(), getY(), getZ(), EXPLOSION_RADIUS, false,
+                        Level.ExplosionInteraction.NONE);
             }
             if (level() instanceof ServerLevel serverLevel) {
                 serverLevel.sendParticles(ParticleTypes.FIREWORK,
