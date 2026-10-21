@@ -33,6 +33,8 @@ public final class RadarCore {
     public static final double NOTCH_BURN_THROUGH_RANGE = 50.0;
     /** GMI 最小可检测径向速度（m/s） */
     public static final double GMI_MIN_HORIZONTAL_SPEED = 0.5;
+    private static final double AIR_CLEARANCE = 1.5;
+    private static final int SUPPORT_SCAN_DEPTH = 8;
 
     /**
      * 在给定雷达位置与朝向，对周围实体执行一次探测。
@@ -161,17 +163,29 @@ public final class RadarCore {
         if (living.isPassenger() && living.getVehicle() instanceof Boat) return null;
         if (living.isInWater()) return null;
 
-        // 目标类别只按运动状态判定：离地即 AIR，在地面即 GROUND，不按物种/体型过滤。
-        // 这样鸡/蜜蜂飞起来可以被空中模式锁定，玩家落回地面后不再作为空中目标。
         if (living.onGround()) return RadarTargetClass.GROUND;
-        // 客户端 onGround 偶尔不同步；脚底紧贴可碰撞方块时仍按地面目标处理。
+
         Level level = living.level();
-        BlockPos below = BlockPos.containing(living.getX(),
-                living.getBoundingBox().minY - 0.06, living.getZ());
-        BlockState support = level.getBlockState(below);
-        if (!support.getCollisionShape(level, below, CollisionContext.empty()).isEmpty()
-                || !level.getFluidState(below).isEmpty()) {
-            return RadarTargetClass.GROUND;
+        double footY = living.getBoundingBox().minY;
+        int startY = (int) Math.floor(footY - 0.01);
+        for (int dy = 0; dy <= SUPPORT_SCAN_DEPTH; dy++) {
+            BlockPos below = BlockPos.containing(living.getX(), startY - dy, living.getZ());
+            BlockState support = level.getBlockState(below);
+            var shape = support.getCollisionShape(level, below, CollisionContext.empty());
+            FluidState fluid = level.getFluidState(below);
+            boolean leaf = support.is(BlockTags.LEAVES);
+            if (shape.isEmpty() && fluid.isEmpty() && !leaf) continue;
+
+            double supportTop = below.getY();
+            if (!shape.isEmpty()) {
+                supportTop += shape.max(net.minecraft.core.Direction.Axis.Y);
+            } else if (!fluid.isEmpty()) {
+                supportTop += fluid.getHeight(level, below);
+            } else {
+                supportTop += 1.0;
+            }
+            return footY - supportTop > AIR_CLEARANCE
+                    ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
         }
         return RadarTargetClass.AIR;
     }

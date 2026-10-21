@@ -49,9 +49,14 @@ public final class IrTargeting {
 
         Entity best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
+        Vec3 look = shooter.getViewVector(1.0F).normalize();
         for (Entity candidate : candidates) {
             if (!valid(level, shooter, candidate, spec)) continue;
-            double score = heat(candidate) - shooter.distanceTo(candidate) * 0.01;
+            Vec3 to = candidate.getBoundingBox().getCenter().subtract(shooter.getEyePosition());
+            double angle = to.lengthSqr() < 1.0E-6 ? 0.0
+                    : Math.toDegrees(Math.acos(clamp(look.dot(to.normalize()), -1.0, 1.0)));
+            double score = heat(candidate) - shooter.distanceTo(candidate) * 0.01
+                    - angle * 4.0;
             if (isRearAspect(shooter, candidate)) score += 25.0;
             if (candidate == radarLock) score += 10_000.0;
             if (score > bestScore) {

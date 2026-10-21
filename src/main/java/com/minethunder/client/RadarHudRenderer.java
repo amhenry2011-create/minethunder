@@ -472,9 +472,9 @@ public final class RadarHudRenderer {
 
         int outerR = (int) (Math.tan(Math.toRadians(spec.lockAngleMaxDeg)) / tanHalf * halfH * ui);
         int innerR = (int) (Math.tan(Math.toRadians(spec.seekerFovDeg)) / tanHalf * halfH * ui);
-        // 红外弹外环画得更大，不为了保证完整显示而缩小；超出屏幕被裁掉即可。
+        // 红外弹外环使用实际 lockAngleMax 角度；超出屏幕时允许裁切。
         if (!radarGuided) {
-            outerR = Math.max(144, (int) Math.round(outerR * 6.0));
+            outerR = Math.max(32, outerR);
             innerR = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
         } else {
             innerR = Math.max(8, Math.min(innerR, Math.max(24, screenH / 2 - 8)));
@@ -493,7 +493,7 @@ public final class RadarHudRenderer {
         if (radarGuided) {
             drawRadarLockLayer(g, mc, screenW, screenH, ui);
         } else if (irFlashOn) {
-            // 红外弹：小圈不自动追目标；无锁定/候选时保持在屏幕中央。
+            // 红外弹：锁定后小圈随目标移动，未锁定时保持在屏幕中央。
             int sx = RadarHud.irAimInitialized ? Math.round(RadarHud.irAimX) : cx;
             int sy = RadarHud.irAimInitialized ? Math.round(RadarHud.irAimY) : cy;
             sx = Math.max(innerR + 4, Math.min(screenW - innerR - 4, sx));

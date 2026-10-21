@@ -392,26 +392,24 @@ public final class RadarHudClientTicker {
 
     /**
      * 红外导引头视觉：由 Alt+X 统一开关。
-     * IR 锁定逻辑暂后置；当前只显示导引头环，不自动选目标。
+     * 锁定前小圈居中，锁定后跟随目标；目标必须保持在 lockAngleMax 大圈内。
      */
     private static void updateIrSeeker(Minecraft mc, Player player) {
         RadarHud.seekerActive = false;
         RadarHud.irCandidate = null;
-        RadarHud.seekerLockedEntity = null;
-        RadarHud.irLocked = false;
 
         int sw = mc.getWindow().getGuiScaledWidth();
         int sh = mc.getWindow().getGuiScaledHeight();
-        if (!RadarHud.seekerEnabled) {
+        if (!RadarHud.seekerEnabled
+                || RadarHud.selectedMissile != MissileSpec.Guidance.IR
+                || RadarHud.selectedSpec == null) {
+            clearIrLock();
             RadarHud.irAimX = sw / 2.0f;
             RadarHud.irAimY = sh / 2.0f;
             RadarHud.irAimInitialized = true;
-            RadarHud.irLockTicks = 0;
-            RadarHud.irLockTargetId = -1;
             RadarHud.irStatus = "";
             return;
         }
-        if (RadarHud.selectedMissile != MissileSpec.Guidance.IR) return;
 
         RadarHud.seekerActive = true;
         if (!RadarHud.irAimInitialized) {
@@ -422,52 +420,89 @@ public final class RadarHudClientTicker {
 
         Entity radarLock = RadarHud.locked && RadarHud.lockedEntity != null
                 ? RadarHud.lockedEntity : null;
-        Entity target = IrTargeting.findTarget(mc.level, player, radarLock,
-                RadarHud.selectedSpec);
-        RadarHud.irCandidate = target;
-        Entity aimTarget = radarLock != null ? radarLock : (RadarHud.irLocked ? target : null);
-
-        float[] targetScreen = null;
-        if (target != null) {
-            targetScreen = RadarHudRenderer.worldToScreen(
-                    target.getBoundingBox().getCenter(), player, sw, sh);
-        }
-        float[] aimScreen = null;
-        if (aimTarget != null) {
-            aimScreen = RadarHudRenderer.worldToScreen(
-                    aimTarget.getBoundingBox().getCenter(), player, sw, sh);
+        if (radarLock != null && !IrTargeting.valid(mc.level, player, radarLock,
+                RadarHud.selectedSpec)) {
+            radarLock = null;
         }
 
-        float ui = HudScale.factor(sw, sh);
-        double smallRadius = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
-
-        // 雷达硬锁定可牵引导引头小圈；否则 IR 不会自动追向候选目标，必须由玩家把目标套进小圈。
-        if (aimScreen != null) {
-            double dx = aimScreen[0] - RadarHud.irAimX;
-            double dy = aimScreen[1] - RadarHud.irAimY;
-            double distance = Math.hypot(dx, dy);
-            double step = 700.0 * 0.05;
-            if (distance <= step + 0.5) {
-                RadarHud.irAimX = aimScreen[0];
-                RadarHud.irAimY = aimScreen[1];
-            } else {
-                RadarHud.irAimX += (float) (dx / distance * step);
-                RadarHud.irAimY += (float) (dy / distance * step);
+        Entity lockedTarget = RadarHud.irLocked ? RadarHud.seekerLockedEntity : null;
+        if (lockedTarget == null && RadarHud.irLocked) {
+            clearIrLock();
+        }
+        if (lockedTarget != null) {
+            boolean sameAsRadar = radarLock == null
+                    || radarLock.getId() == lockedTarget.getId();
+            if (!sameAsRadar || !lockedTarget.isAlive()
+                    || !IrTargeting.valid(mc.level, player, lockedTarget,
+                    RadarHud.selectedSpec)) {
+                clearIrLock();
+                lockedTarget = null;
             }
         }
 
-        if (target == null || targetScreen == null) {
+        Entity target = lockedTarget != null ? lockedTarget
+                : (radarLock != null ? radarLock
+                : IrTargeting.findTarget(mc.level, player, null,
+                RadarHud.selectedSpec));
+        RadarHud.irCandidate = target;
+
+        Entity aimTarget = radarLock != null ? radarLock : lockedTarget;
+        float ui = HudScale.factor(sw, sh);
+        double smallRadius = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
+
+        if (aimTarget != null) {
+            float[] aimScreen = RadarHudRenderer.worldToScreen(
+                    aimTarget.getBoundingBox().getCenter(), player, sw, sh);
+            if (aimScreen != null) {
+                double dx = aimScreen[0] - RadarHud.irAimX;
+                double dy = aimScreen[1] - RadarHud.irAimY;
+                double distance = Math.hypot(dx, dy);
+                double step = 700.0 * 0.05;
+                if (distance <= step + 0.5) {
+                    RadarHud.irAimX = aimScreen[0];
+                    RadarHud.irAimY = aimScreen[1];
+                } else {
+                    RadarHud.irAimX += (float) (dx / distance * step);
+                    RadarHud.irAimY += (float) (dy / distance * step);
+                }
+            }
+        } else {
+            RadarHud.irAimX = sw / 2.0f;
+            RadarHud.irAimY = sh / 2.0f;
+        }
+
+        if (target == null) {
+            clearIrLock();
             if (radarLock == null) {
                 RadarHud.irAimX = sw / 2.0f;
                 RadarHud.irAimY = sh / 2.0f;
             }
-            RadarHud.irLockTicks = 0;
-            RadarHud.irLockTargetId = -1;
+            RadarHud.irStatus = radarLock != null ? "截获" : "搜索";
+            return;
+        }
+
+        float[] targetScreen = RadarHudRenderer.worldToScreen(
+                target.getBoundingBox().getCenter(), player, sw, sh);
+        if (targetScreen == null) {
+            clearIrLock();
+            if (radarLock == null) {
+                RadarHud.irAimX = sw / 2.0f;
+                RadarHud.irAimY = sh / 2.0f;
+            }
             RadarHud.irStatus = radarLock != null ? "截获" : "搜索";
             return;
         }
 
         int targetId = target.getId();
+        if (lockedTarget != null) {
+            RadarHud.irLocked = true;
+            RadarHud.seekerLockedEntity = lockedTarget;
+            RadarHud.irLockTargetId = targetId;
+            RadarHud.irLockTicks = 20;
+            RadarHud.irStatus = "锁定";
+            return;
+        }
+
         if (targetId != RadarHud.irLockTargetId) {
             RadarHud.irLockTargetId = targetId;
             RadarHud.irLockTicks = 0;
@@ -482,12 +517,21 @@ public final class RadarHudClientTicker {
             if (RadarHud.irLockTicks >= 20) {
                 RadarHud.irLocked = true;
                 RadarHud.seekerLockedEntity = target;
+                RadarHud.irLockTargetId = targetId;
             }
         } else {
             RadarHud.irLockTicks = 0;
             RadarHud.irLocked = false;
+            RadarHud.seekerLockedEntity = null;
             RadarHud.irStatus = "截获";
         }
+    }
+
+    private static void clearIrLock() {
+        RadarHud.irLocked = false;
+        RadarHud.seekerLockedEntity = null;
+        RadarHud.irLockTargetId = -1;
+        RadarHud.irLockTicks = 0;
     }
 
     /** 锁定目标未被雷达刷新时，计算其在雷达面板上的预测点。 */
@@ -1233,6 +1277,10 @@ public final class RadarHudClientTicker {
         RadarHud.seekerRing.resetToCenter(0, 0);
         RadarHud.lockProgress = 0f;
         RadarHud.seekerMessage = message;
+        RadarHud.seekerActive = false;
+        RadarHud.irCandidate = null;
+        RadarHud.irStatus = "";
+        clearIrLock();
         lastSeekerLockId = -1;
     }
 
@@ -1281,6 +1329,8 @@ public final class RadarHudClientTicker {
         RadarHud.lockAnchorPosition = Vec3.ZERO;
         RadarHud.seekerActive = false;
         RadarHud.seekerLockedEntity = null;
+        clearIrLock();
+        RadarHud.irStatus = "";
         RadarHud.seekerInertial = false;
         RadarHud.inertialAzimuthDeg = 0;
         RadarHud.inertialDistance = 0;

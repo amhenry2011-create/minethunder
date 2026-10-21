@@ -6,6 +6,7 @@ import com.minethunder.missile.IrHeat;
 import com.minethunder.missile.MissileArrow;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.radar.RadarContact;
+import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -93,7 +94,6 @@ public final class SensorDebugRenderer {
 
         RadarMode mode = RadarHud.currentMode;
         boolean tracking = mode == RadarMode.STT;
-        boolean tws = mode == RadarMode.TWS;
         boolean acq = RadarHud.lockAcquiring;
         boolean useSearch = !tracking && !(acq && RadarHud.lockedEntity != null);
 
@@ -112,25 +112,53 @@ public final class SensorDebugRenderer {
             double range = Math.max(1.0, Math.min(RadarHud.effectiveRange(), 220.0));
             Vec3 farCenter = origin.add(dir.scale(range));
             double half = Math.max(0.45, Math.min(5.0, range * 0.012));
-            drawBeamToPoint(g, player, near, farCenter, dir, half, screenW, screenH,
-                    0x2866FF66, 0x9066FF66);
-        }
-
-        if (tws) {
-            int count = 0;
-            for (RadarEcho echo : RadarHud.echoes.values()) {
-                if (count++ >= 6) break;
-                Entity target = mc.level == null ? null : mc.level.getEntity(echo.entityId);
-                if (target == null || !target.isAlive()) continue;
-                drawBeamToTarget(g, player, near, target, screenW, screenH,
-                        0x3448FF88, 0xFF7CFF9E);
+            float[] farScreen = RadarHudRenderer.worldToScreen(farCenter, player, screenW, screenH);
+            boolean visible = farScreen != null
+                    && farScreen[0] >= 0 && farScreen[0] <= screenW
+                    && farScreen[1] >= 0 && farScreen[1] <= screenH;
+            if (!visible || !drawBeamToPoint(g, player, near, farCenter, dir, half,
+                    screenW, screenH, 0x4066FF66, 0xB066FF66)) {
+                drawScanEdgeMarker(g, screenW, screenH, RadarHud.sweepAzimuthDeg);
             }
         }
+
+        drawContactBeams(g, mc, player, near, screenW, screenH, mode);
 
         if (acq && RadarHud.lockedEntity != null && RadarHud.lockedEntity.isAlive()) {
             drawBeamToTarget(g, player, near, RadarHud.lockedEntity, screenW, screenH,
                     0x3448FF88, 0xFF9FFF9F);
         }
+    }
+
+    private static void drawContactBeams(GuiGraphics g, Minecraft mc, Player player, Vec3[] near,
+                                         int screenW, int screenH, RadarMode mode) {
+        if (mc.level == null || mc.player == null) return;
+        int tick = mc.player.tickCount;
+        int count = 0;
+        for (RadarEcho echo : RadarHud.echoes.values()) {
+            if (count >= 6) break;
+            if (echo.expired(tick)) continue;
+            Entity target = mc.level.getEntity(echo.entityId);
+            if (target == null || !target.isAlive()) continue;
+            var targetClass = RadarCore.classify(target);
+            if (targetClass == null || !mode.accepts(targetClass)) continue;
+            boolean selected = echo.entityId == RadarHud.selectedEchoId;
+            drawBeamToTarget(g, player, near, target, screenW, screenH,
+                    selected ? 0x7048FF88 : 0x4048FF88,
+                    selected ? 0xFFFFD070 : 0xB07CFF9E);
+            count++;
+        }
+    }
+
+    private static void drawScanEdgeMarker(GuiGraphics g, int screenW, int screenH,
+                                           double sweepAzimuthDeg) {
+        int side = sweepAzimuthDeg >= 0 ? 1 : -1;
+        int baseX = side > 0 ? screenW - 24 : 24;
+        int tipX = side > 0 ? screenW - 6 : 6;
+        int cy = screenH / 2;
+        drawLine(g, baseX, cy - 8, tipX, cy, 0xFFFFC040);
+        drawLine(g, baseX, cy + 8, tipX, cy, 0xFFFFC040);
+        drawLine(g, screenW / 2, cy, baseX, cy, 0x4066FF66);
     }
 
     private static Vec3[] corners(Vec3 center, Vec3 right, Vec3 up, double half) {
@@ -144,18 +172,18 @@ public final class SensorDebugRenderer {
         };
     }
 
-    private static void drawBeamToTarget(GuiGraphics g, Player player, Vec3[] near,
-                                         Entity target, int screenW, int screenH,
-                                         int fill, int edge) {
+    private static boolean drawBeamToTarget(GuiGraphics g, Player player, Vec3[] near,
+                                            Entity target, int screenW, int screenH,
+                                            int fill, int edge) {
         Vec3 center = target.getBoundingBox().getCenter();
         Vec3 dir = center.subtract(player.getEyePosition()).normalize();
-        double half = Math.max(0.35, Math.max(target.getBbWidth(), target.getBbHeight()) * 0.5);
-        drawBeamToPoint(g, player, near, center, dir, half, screenW, screenH, fill, edge);
+        double half = Math.max(0.5, Math.max(target.getBbWidth(), target.getBbHeight()) * 0.5);
+        return drawBeamToPoint(g, player, near, center, dir, half, screenW, screenH, fill, edge);
     }
 
-    private static void drawBeamToPoint(GuiGraphics g, Player player, Vec3[] near,
-                                        Vec3 farCenter, Vec3 dir, double farHalf,
-                                        int screenW, int screenH, int fill, int edge) {
+    private static boolean drawBeamToPoint(GuiGraphics g, Player player, Vec3[] near,
+                                           Vec3 farCenter, Vec3 dir, double farHalf,
+                                           int screenW, int screenH, int fill, int edge) {
         Vec3 worldUp = new Vec3(0, 1, 0);
         Vec3 right = dir.cross(worldUp);
         if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
@@ -165,7 +193,7 @@ public final class SensorDebugRenderer {
 
         float[][] n = projectAll(player, near, screenW, screenH);
         float[][] f = projectAll(player, far, screenW, screenH);
-        if (n == null || f == null) return;
+        if (n == null || f == null) return false;
 
         // 四个侧面 + 远端面，使用半透明填充。
         fillQuad(g, n[0], n[1], f[1], f[0], fill);
@@ -180,6 +208,7 @@ public final class SensorDebugRenderer {
             drawLine(g, (int) f[i][0], (int) f[i][1], (int) f[j][0], (int) f[j][1], edge);
             drawLine(g, (int) n[i][0], (int) n[i][1], (int) f[i][0], (int) f[i][1], edge);
         }
+        return true;
     }
 
     @Nullable
