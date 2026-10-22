@@ -64,12 +64,16 @@ public final class RadarHudClientTicker {
     private static boolean lastSentRadarOn = true;
     private static float lastSentTrackQuality = 1f;
     private static RadarMode lastMode = RadarMode.SRC_PD;
-    /** 当前扫描行与上一 tick 的扫描线位置，用于按线段交叉点亮回波。 */
+    /** 当前扫描行与上一 tick 的扫描位置，用于构造本 tick 扫过段。 */
     private static int scanRow = -1;
     private static int lastSweepRow = -1;
     private static double lastSweepAzimuth = 0;
     /** 限制同一目标的 SRC PD 扫描命中上报频率。 */
     private static final java.util.Map<Integer, Integer> paintSentTicks = new java.util.HashMap<>();
+
+    /** 当前 tick 实际扫描的波束窗口，角度均相对玩家视线。 */
+    private record ScanWindow(double azCenterDeg, double elCenterDeg,
+                              double azHalfDeg, double elHalfDeg) {}
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
@@ -159,22 +163,47 @@ public final class RadarHudClientTicker {
             return;
         }
 
-        // 雷达扫描：扫描中心可随方向键偏移。回波角度统一为相对玩家视线的绝对角度。
+        // 雷达扫描：搜索模式只探测当前扫描行扫过的窄波束；ACM 保留连续全框截获。
         Vec3 origin = player.getEyePosition();
-        Vec3 look = scanDirection(player);
-        var rawContacts = RadarCore.scan(mc.level, origin, look, RadarHud.currentMode,
-                RadarHud.effectiveRange(), Math.toRadians(RadarHud.effectiveScanHalfDeg()),
-                Math.toRadians(RadarHud.effectiveScanElevationHalfDeg()),
-                player.getDeltaMovement(), player);
         int nowTick = player.tickCount;
+        boolean sttLocked = RadarHud.currentMode == RadarMode.STT
+                && RadarHud.locked && RadarHud.lockedEntity != null;
+        List<RadarContact> rawContacts;
+        double contactOffsetAz;
+        double contactOffsetEl;
+        if (sttLocked) {
+            // TRK PD 只跟踪锁定目标，不再跑通用扇区扫描。
+            rawContacts = List.of();
+            contactOffsetAz = 0.0;
+            contactOffsetEl = 0.0;
+        } else if (RadarHud.currentMode == RadarMode.ACM) {
+            // ACM 是格斗模式：保留每 tick 全 ACM 框扫描，保证自动截获速度。
+            Vec3 look = scanDirection(player);
+            rawContacts = RadarCore.scan(mc.level, origin, look, RadarHud.currentMode,
+                    RadarHud.effectiveRange(), Math.toRadians(RadarHud.effectiveScanHalfDeg()),
+                    Math.toRadians(RadarHud.effectiveScanElevationHalfDeg()),
+                    player.getDeltaMovement(), player);
+            contactOffsetAz = RadarHud.scanAzimuthOffsetDeg;
+            contactOffsetEl = RadarHud.scanElevationOffsetDeg;
+        } else {
+            ScanWindow window = currentScanWindow();
+            Vec3 beamDir = Vec3.directionFromRotation(
+                    player.getXRot() - (float) window.elCenterDeg(),
+                    player.getYRot() + (float) window.azCenterDeg()).normalize();
+            rawContacts = RadarCore.scanBeam(mc.level, origin, beamDir, RadarHud.currentMode,
+                    RadarHud.effectiveRange(), Math.toRadians(window.azHalfDeg()),
+                    Math.toRadians(window.elHalfDeg()), player.getDeltaMovement(), player);
+            contactOffsetAz = window.azCenterDeg();
+            contactOffsetEl = window.elCenterDeg();
+        }
         List<RadarContact> contacts = new ArrayList<>();
         for (RadarContact c : rawContacts) {
             // TWS 只搜索空中目标，地面/海面/方块目标不得进入 TWS 航迹。
             if (RadarHud.currentMode == RadarMode.TWS
                     && c.targetClass != RadarTargetClass.AIR) continue;
             contacts.add(new RadarContact(c.entity, c.distance,
-                    c.azimuthDeg + RadarHud.scanAzimuthOffsetDeg,
-                    c.elevationDeg + RadarHud.scanElevationOffsetDeg,
+                    c.azimuthDeg + contactOffsetAz,
+                    c.elevationDeg + contactOffsetEl,
                     c.radialVelocity, c.position, c.occluded, c.inDopplerNotch,
                     c.notchSeverity, c.targetClass));
         }
@@ -183,48 +212,25 @@ public final class RadarHudClientTicker {
         RadarHud.echoes.entrySet().removeIf(e -> nowTick - e.getValue().lastHitTick > RadarHud.CONTACT_MEMORY_TICKS);
         RadarHud.contactPaintTicks.entrySet().removeIf(e -> nowTick - e.getValue() > RadarHud.CONTACT_MEMORY_TICKS);
         for (RadarContact c : contacts) {
-            // 扫描线命中：同一扫描行内用上一 tick 到当前 tick 的线段交叉判定，避免高速扫描漏目标。
-            boolean azHit;
-            if (lastSweepRow == scanRow) {
-                double lo = Math.min(lastSweepAzimuth, RadarHud.sweepAzimuthDeg);
-                double hi = Math.max(lastSweepAzimuth, RadarHud.sweepAzimuthDeg);
-                azHit = c.azimuthDeg >= lo - 3.0 && c.azimuthDeg <= hi + 3.0;
+            // 当前 contacts 已经是本 tick 波束（或 ACM 全框）内的命中，不再做二次扫描线门控。
+            RadarEcho echo = RadarHud.echoes.get(c.entity.getUUID());
+            if (echo == null) {
+                RadarHud.echoes.put(c.entity.getUUID(), new RadarEcho(c, nowTick));
             } else {
-                azHit = Math.abs(c.azimuthDeg - RadarHud.sweepAzimuthDeg) <= 3.0;
+                echo.update(c, nowTick);
             }
-            boolean hit = azHit
-                    && Math.abs(c.elevationDeg - RadarHud.sweepElevationDeg) <= 4.5;
-            if (hit) {
-                // 39 只降低亮度/质量，不直接删除回波。
-                RadarEcho echo = RadarHud.echoes.get(c.entity.getUUID());
-                if (echo == null) {
-                    RadarHud.echoes.put(c.entity.getUUID(), new RadarEcho(c, nowTick));
-                } else {
-                    echo.update(c, nowTick);
-                }
-                RadarHud.contactPaintTicks.put(c.entity.getUUID(), nowTick);
-                if (RadarHud.currentMode == RadarMode.SRC_PD
-                        && c.entity instanceof Player target && target != player) {
-                    int last = paintSentTicks.getOrDefault(target.getId(), -100);
-                    if (nowTick - last >= 10) {
-                        Network.sendToServer(new RwrPaintPacket(target.getId()));
-                        paintSentTicks.put(target.getId(), nowTick);
-                    }
+            RadarHud.contactPaintTicks.put(c.entity.getUUID(), nowTick);
+            if (RadarHud.currentMode == RadarMode.SRC_PD
+                    && c.entity instanceof Player target && target != player) {
+                int last = paintSentTicks.getOrDefault(target.getId(), -100);
+                if (nowTick - last >= 10) {
+                    Network.sendToServer(new RwrPaintPacket(target.getId()));
+                    paintSentTicks.put(target.getId(), nowTick);
                 }
             }
         }
         if (RadarHud.currentMode == RadarMode.TWS) {
-            // AESA 近似：TWS 当前扫描体积内的所有空中回波同时刷新航迹，
-            // 不再只依赖单条扫描线经过目标。
-            for (RadarContact c : contacts) {
-                if (c.targetClass != RadarTargetClass.AIR) continue;
-                RadarEcho echo = RadarHud.echoes.get(c.entity.getUUID());
-                if (echo == null) {
-                    RadarHud.echoes.put(c.entity.getUUID(), new RadarEcho(c, nowTick));
-                } else {
-                    echo.update(c, nowTick);
-                }
-            }
+            // TWS 与搜索雷达同一套逐行波束：航迹由命中回波刷新，未命中时由预测维持。
             // 清除切换模式残留的地面/海面回波，避免 TWS 面板继续显示。
             RadarHud.echoes.entrySet().removeIf(e ->
                     e.getValue().targetClass != RadarTargetClass.AIR);
@@ -829,10 +835,11 @@ public final class RadarHudClientTicker {
         RadarEcho best = null;
         int now = Minecraft.getInstance().player == null
                 ? 0 : Minecraft.getInstance().player.tickCount;
+        int maxEchoAge = RadarHud.scanFrameTicks() + 20;
         for (RadarEcho echo : RadarHud.echoes.values()) {
             if (echo.expired(now) || !echoAllowed(echo)) continue;
-            // 手动尝试锁定必须基于最近实际扫描到的回波，而不是 9 秒内的旧记忆。
-            if (now - echo.lastHitTick > 40) continue;
+            // 手动尝试锁定必须基于当前扫描周期内实际扫描到的回波，而不是旧记忆。
+            if (now - echo.lastHitTick > maxEchoAge) continue;
             if (echo.entityId == RadarHud.selectedEchoId) {
                 best = echo;
                 break;
@@ -888,13 +895,22 @@ public final class RadarHudClientTicker {
             cancelLockAttempt("尝试锁定失败");
             return;
         }
-        // 普通搜索尝试期间目标必须仍在当前扫描体积内；TWS 使用已建立软航迹，不额外要求扫描命中。
-        if (RadarHud.preLockMode != RadarMode.TWS && findContact(target) == null) {
-            cancelLockAttempt("尝试锁定失败");
-            return;
+        if (RadarHud.preLockMode != RadarMode.TWS) {
+            Vec3 eye = player.getEyePosition();
+            Vec3 targetPos = target.getBoundingBox().getCenter();
+            RadarTargetClass targetClass = RadarCore.classify(target);
+            if (eye.distanceTo(targetPos) > RadarHud.effectiveRange()
+                    || targetClass == null
+                    || RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass)) {
+                cancelLockAttempt("尝试锁定失败");
+                return;
+            }
         }
-        // 普通搜索必须在最近 2 秒内实际被扫描到。
-        if (RadarHud.preLockMode != RadarMode.TWS && tick - echo.lastHitTick > 40) {
+        // 目标必须在上一轮扫描周期内被实际命中，并给 20 tick 锁定建立留出时间；
+        // 按波束逐行扫描后不再要求本 tick 仍在 contacts 里。TWS 使用已建立软航迹。
+        if (RadarHud.preLockMode != RadarMode.TWS
+                && tick - echo.lastHitTick
+                > RadarHud.scanFrameTicks() + RadarHud.LOCK_ACQUIRE_TICKS + 20) {
             cancelLockAttempt("尝试锁定失败");
             return;
         }
@@ -1165,6 +1181,24 @@ public final class RadarHudClientTicker {
         RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
                 + elevationHalf
                 - (row + 0.5) * elevationSpan / rows);
+    }
+
+    /**
+     * 当前 tick 的窄波束窗口：同一行内覆盖上一 tick 到当前 tick 扫过的方位段，
+     * 换行时只扫当前方位，避免把上一行末尾和下一行开头连成一个大扇区。
+     */
+    private static ScanWindow currentScanWindow() {
+        boolean rowChanged = lastSweepRow != scanRow;
+        double sweepDelta = Math.abs(RadarHud.sweepAzimuthDeg - lastSweepAzimuth);
+        if (!rowChanged && sweepDelta <= RadarHud.MAX_SWEEP_STEP_DEG) {
+            return new ScanWindow(
+                    (RadarHud.sweepAzimuthDeg + lastSweepAzimuth) * 0.5,
+                    RadarHud.sweepElevationDeg,
+                    sweepDelta * 0.5 + RadarHud.SCAN_BEAM_HALF_AZ_DEG,
+                    RadarHud.SCAN_BEAM_HALF_EL_DEG);
+        }
+        return new ScanWindow(RadarHud.sweepAzimuthDeg, RadarHud.sweepElevationDeg,
+                RadarHud.SCAN_BEAM_HALF_AZ_DEG, RadarHud.SCAN_BEAM_HALF_EL_DEG);
     }
 
     /** 扫描中心：玩家视线叠加方位/仰角偏移。 */

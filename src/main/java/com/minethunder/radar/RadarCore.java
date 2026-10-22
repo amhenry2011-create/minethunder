@@ -53,8 +53,35 @@ public final class RadarCore {
     public static List<RadarContact> scan(Level level, Vec3 origin, Vec3 lookDir, RadarMode mode,
                                           double maxRange, double halfAzimuth, double halfElevation,
                                           Vec3 radarVelocity, Entity exclude) {
+        return scan(level, origin, lookDir, mode, maxRange, halfAzimuth, halfElevation,
+                radarVelocity, exclude, new AABB(origin, origin).inflate(maxRange));
+    }
+
+    /**
+     * 窄波束扫描：只查询当前波束的保守 AABB，避免每 tick 扫描整个搜索扇区。
+     * 仅用于小张角（客户端逐行扫描）；服务端全扇区校验继续使用 {@link #scan}。
+     */
+    public static List<RadarContact> scanBeam(Level level, Vec3 origin, Vec3 lookDir,
+                                              RadarMode mode, double maxRange,
+                                              double halfAzimuth, double halfElevation,
+                                              Vec3 radarVelocity, Entity exclude) {
+        double corner = Math.hypot(halfAzimuth, halfElevation);
+        AABB area;
+        if (!Double.isFinite(corner) || corner >= Math.toRadians(20.0)) {
+            area = new AABB(origin, origin).inflate(maxRange);
+        } else {
+            Vec3 far = origin.add(lookDir.normalize().scale(maxRange));
+            double radius = maxRange * Math.tan(Math.max(0.0, corner)) + 8.0;
+            area = new AABB(origin, far).inflate(radius);
+        }
+        return scan(level, origin, lookDir, mode, maxRange, halfAzimuth, halfElevation,
+                radarVelocity, exclude, area);
+    }
+
+    private static List<RadarContact> scan(Level level, Vec3 origin, Vec3 lookDir, RadarMode mode,
+                                           double maxRange, double halfAzimuth, double halfElevation,
+                                           Vec3 radarVelocity, Entity exclude, AABB area) {
         List<RadarContact> contacts = new ArrayList<>();
-        AABB area = new AABB(origin, origin).inflate(maxRange);
         List<Entity> entities = level.getEntities(exclude, area, Entity::isAlive);
 
         for (Entity e : entities) {

@@ -47,7 +47,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 - Loader migrated to NeoForge 21.1.x; see `MIGRATION_NEOFORGE.md`.
 - Radar modes: SRC, SRC PD, TWS, GMI, SEA, ACM, STT. MTI removed. Air modes accept AIR only; GMI accepts GROUND+SEA moving; SEA accepts SEA ships only. See `RADAR_MODES.md`.
 - Firework crossbow canceled. Three missile fireworks are inventory ammo; `Ctrl+Alt` fires directly from inventory (no arm step). Auto ammo priority: manual → ARH → SARH → IR. Recipes exist for IR/SARH/ARH. Guided firework rendering remains.
-- Radar ranges 10/40/100/300/600/1000 b, default 300; scan widths ±120/60/30, default ±120.
+- Radar ranges 40/100/300/600/1000 b, default 300; scan patterns 40x20/120x10/120x20, default 120x20; 240x10 removed.
 - Target selection is panel-only: Alt+T changes panel selection, no lock/screen action; Alt+F starts TRK PD. TRK PD is single-target only.
 - IR lock is implemented: the small ring acquires for 1 second, then follows the target inside the 6x visual outer ring; the outer ring is authoritative at about 73.9° effective off-boresight.
 - Radar panel selected target has horizontal + two vertical lines. Long screen vertical line removed. TWS scan center follows selected target.
@@ -55,7 +55,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 - Current guidance core uses SI->blocks/tick conversion and PN; ARH active-seeker sophistication and full SARH/IR behavior are still in progress.
 - Launch line/inertial circle rendering has started; verify in game.
 
-- TWS: multiple echoes retained, only one current tracked/hard-lockable target; `Alt+T` switches current; `Alt+Q`/`Alt+D` adjust TWS/global range/scan; full ±60 scan forbids left/right center shift.
+- TWS: multiple echoes retained, only one current tracked/hard-lockable target; `Alt+T` switches current; `Alt+Q`/`Alt+D` adjust TWS/global range/scan; wide ±60 scan allows ±30 center shift.
 - ACM: independent range, default 100 b; `Alt+Q` adjusts range; `Alt+D` is disabled and width stays ±3°; scan position fixed.
 - Notch: realistic degradation via `RadarCore`: threshold 5 m/s, burn-through 0–50 b, mode sensitivity SRC 0 / MTI 0.7 / ACM 0.85 / PD/TWS/STT 1.0. No hard invisibility; no hard server rejection.
 - Lock flow: `Alt+F` starts a fixed 4-corner acquisition at the approximate scanned position (20 ticks), then switches actual `RadarMode.STT` (`TRK PD`); panel target becomes bright green dot; main screen green square + speed data; unlock/drop restores previous search mode.

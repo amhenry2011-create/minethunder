@@ -37,21 +37,25 @@ public final class RadarHud {
     public static boolean radarOn = true;
     /** 雷达导引头是否开启（Alt+X 切换） */
     public static boolean seekerEnabled = false;
-    /** 方位面板覆盖范围（±120°），与最大扫描宽度一致 */
+    /** 面板方位显示范围（±120°），不再等于最大搜索宽度 */
     public static final double PANEL_AZIMUTH_DEG = 120.0;
     /** 距离档位：Q/Alt+Q 循环 */
-    public static final double[] RANGES = {10, 40, 100, 300, 600, 1000};
-    public static int rangeIndex = 3;
+    public static final double[] RANGES = {40, 100, 300, 600, 1000};
+    public static int rangeIndex = 2;
     /** 真实雷达扫描模式：方位总宽度 × 仰角总覆盖。 */
     public record ScanPattern(String label, double halfAzimuthDeg,
                               double halfElevationDeg, int rows) {}
     public static final ScanPattern[] SCAN_PATTERNS = {
             new ScanPattern("40x20", 20.0, 10.0, 4),
             new ScanPattern("120x10", 60.0, 5.0, 2),
-            new ScanPattern("120x20", 60.0, 10.0, 4),
-            new ScanPattern("240x10", 120.0, 5.0, 2)
+            new ScanPattern("120x20", 60.0, 10.0, 4)
     };
-    public static int scanPatternIndex = 3;
+    public static int scanPatternIndex = 2;
+    /** 单次波束宽度：方位 3°、仰角 5°。搜索行高也是 5°，相邻行刚好铺满。 */
+    public static final double SCAN_BEAM_HALF_AZ_DEG = 1.5;
+    public static final double SCAN_BEAM_HALF_EL_DEG = 2.5;
+    /** 单行扫描内允许的最大方位跨步；超过视为手动平移，只扫当前波束。 */
+    public static final double MAX_SWEEP_STEP_DEG = 15.0;
     /** ACM/TRK 的固定仰角范围与行数。 */
     public static final double SCAN_ELEVATION_HALF_DEG = 60.0;
     public static final int SCAN_ELEVATION_ROWS = 7;
@@ -75,7 +79,7 @@ public final class RadarHud {
         return SCAN_PATTERNS[Math.floorMod(scanPatternIndex, SCAN_PATTERNS.length)];
     }
 
-    /** TRK PD 强制全范围 120°；ACM 固定；其他模式使用扫描模式。 */
+    /** TRK PD 使用 ±120° 跟踪门限；ACM 固定；其他模式使用当前搜索档位。 */
     public static double effectiveScanHalfDeg() {
         if (currentMode == RadarMode.STT) return PANEL_AZIMUTH_DEG;
         if (currentMode == RadarMode.ACM) return acmScanHalfDeg;
@@ -90,6 +94,12 @@ public final class RadarHud {
     public static int effectiveScanRows() {
         return currentMode == RadarMode.STT || currentMode == RadarMode.ACM
                 ? SCAN_ELEVATION_ROWS : scanPattern().rows();
+    }
+
+    /** 一整帧（含上下往复）所需 tick；用于判断回波是否仍在当前扫描周期内。 */
+    public static int scanFrameTicks() {
+        int rows = Math.max(2, effectiveScanRows());
+        return (rows * 2 - 2) * SCAN_ROW_TICKS;
     }
 
     /** TRK PD 与 ACQ PD 共用当前距离档；ACM 仅在 ACM 搜索阶段使用独立距离。 */
@@ -116,8 +126,8 @@ public final class RadarHud {
     /** 退出 TRK PD 后恢复的搜索模式 */
     public static RadarMode preLockMode = RadarMode.SRC_PD;
     /** 尝试锁定前的扫描参数快照，失败时恢复。 */
-    public static int preLockRangeIndex = 3;
-    public static int preLockScanPatternIndex = 3;
+    public static int preLockRangeIndex = 2;
+    public static int preLockScanPatternIndex = 2;
     public static double preLockScanAzimuthOffsetDeg = 0;
     public static double preLockScanElevationOffsetDeg = 0;
     /** 尝试锁定框固定的扫描点位置。 */
