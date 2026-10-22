@@ -31,6 +31,13 @@ public final class SeekerLockModel {
     private static final double EXIT_QUALITY = 0.40;
     private static final double GIMBAL_EXIT_MARGIN_DEG = 3.0;
 
+    // 战雷表现：信号足够强（近距离/正对轴/高接近率）时打开导引头直接进入红色倒计时；
+    // 极近距离且质量很高时直接红色双环（完全锁定）。
+    private static final double SKIP_TO_TRACKING_QUALITY = 0.70;
+    private static final double SKIP_TO_TRACKING_MAX_RANGE = 150.0;
+    private static final double SKIP_TO_HIGH_QUALITY = 0.85;
+    private static final double SKIP_TO_HIGH_MAX_RANGE = 80.0;
+
     private State state = State.SEARCHING;
     private double progress;
     private double stability;
@@ -130,7 +137,17 @@ public final class SeekerLockModel {
 
         switch (state) {
             case SEARCHING -> {
-                if (quality > ACQUIRE_QUALITY) {
+                if (quality >= SKIP_TO_HIGH_QUALITY
+                        && range <= SKIP_TO_HIGH_MAX_RANGE) {
+                    state = State.HIGH;
+                    progress = 1.0;
+                    stability = 1.0;
+                } else if (quality >= SKIP_TO_TRACKING_QUALITY
+                        && range <= SKIP_TO_TRACKING_MAX_RANGE) {
+                    state = State.TRACKING;
+                    progress = 1.0;
+                    stability = 0.0;
+                } else if (quality > ACQUIRE_QUALITY) {
                     state = State.ACQUIRING;
                 }
             }

@@ -369,18 +369,17 @@ public final class RadarHudClientTicker {
     }
 
     /**
-     * 雷达弹导引头：中间环从屏幕中心抛向锁定目标；环未对准前不建立稳定跟踪。
+     * 雷达弹导引头：中间环从屏幕中心抛向目标；TRK 与 TWS 通用，只有硬/软锁定才能开启。
+     * 目标来源优先级：硬锁定（TRK PD/STT）> TWS 当前软跟踪 > BVR 远程 TRK（数据链软锁）。
      * 稳定环状态由 SeekerLockModel 计算，HUD 直接读取。
      */
     private static void updateRadarSeeker(Minecraft mc, Player player) {
         boolean radarGuided = RadarHud.selectedMissile == MissileSpec.Guidance.SARH
                 || RadarHud.selectedMissile == MissileSpec.Guidance.ARH;
-        Entity target = RadarHud.lockedEntity;
         int sw = mc.getWindow().getGuiScaledWidth();
         int sh = mc.getWindow().getGuiScaledHeight();
 
-        if (!radarGuided || !RadarHud.seekerEnabled || target == null
-                || !RadarHud.locked) {
+        if (!radarGuided || !RadarHud.seekerEnabled) {
             if (lastSeekerLockId != -1) {
                 RadarHud.seekerRing.resetToCenter(sw / 2.0, sh / 2.0);
                 RadarHud.seekerModel.reset();
@@ -390,22 +389,54 @@ public final class RadarHudClientTicker {
             return;
         }
 
-        int targetId = target.getId();
-        if (targetId != lastSeekerLockId) {
+        // 硬锁定 / TWS 软跟踪（本地实体）优先，BVR 远程 TRK 无本地实体，用数据链位置。
+        Entity entityTarget = RadarHud.locked ? RadarHud.lockedEntity : null;
+        TwsTrack twsTrack = entityTarget == null && RadarHud.currentMode == RadarMode.TWS
+                ? TwsTrackManager.selected() : null;
+        if (entityTarget == null && twsTrack != null) {
+            entityTarget = TwsTrackManager.entity(twsTrack.entityId);
+            if (entityTarget != null && !entityTarget.isAlive()) entityTarget = null;
+        }
+        BvrTrack bvrTrack = entityTarget == null && RadarHud.bvrLockedUuid != null
+                ? BvrState.get(RadarHud.bvrLockedUuid) : null;
+
+        int sourceId;
+        Vec3 targetPos;
+        double closure;
+        if (entityTarget != null) {
+            sourceId = entityTarget.getId();
+            targetPos = entityTarget.getBoundingBox().getCenter();
+            closure = RadarHud.locked ? RadarHud.lockedClosure
+                    : (twsTrack == null ? 0.0 : twsTrack.closure);
+        } else if (bvrTrack != null
+                && !mc.player.getUUID().equals(bvrTrack.uuid())) {
+            sourceId = -(int) Math.abs((long) bvrTrack.uuid().hashCode());
+            targetPos = BvrState.lagCompensatedPosition(bvrTrack);
+            closure = RadarHud.bvrLockedClosure;
+        } else {
+            if (lastSeekerLockId != -1) {
+                RadarHud.seekerRing.resetToCenter(sw / 2.0, sh / 2.0);
+                RadarHud.seekerModel.reset();
+                RadarHud.lockProgress = 0f;
+                lastSeekerLockId = -1;
+            }
+            return;
+        }
+
+        Vec3 eye = player.getEyePosition();
+        double range = player.getEyePosition().distanceTo(targetPos);
+        if (sourceId != lastSeekerLockId) {
             double hold = RadarHud.selectedMissile == MissileSpec.Guidance.ARH ? 0.5 : 1.0;
             RadarHud.seekerRing.resetToCenter(sw / 2.0, sh / 2.0, hold);
             RadarHud.seekerModel.reset();
             RadarHud.lockProgress = 0f;
-            lastSeekerLockId = targetId;
+            lastSeekerLockId = sourceId;
         }
 
-        Vec3 targetPos = target.getBoundingBox().getCenter();
-        Vec3 eye = player.getEyePosition();
         Vec3 to = targetPos.subtract(eye);
-        double range = to.length();
         Vec3 look = player.getViewVector(1.0F).normalize();
-        double offBoresight = Math.toDegrees(Math.acos(
-                clamp(look.dot(to.normalize()), -1.0, 1.0)));
+        double offBoresight = to.lengthSqr() > 1e-6 ? Math.toDegrees(Math.acos(
+                clamp(look.dot(to.normalize()), -1.0, 1.0))) : 0.0;
 
         float[] p = RadarHudRenderer.worldToScreen(targetPos, player, sw, sh);
         double ringX = p == null ? sw / 2.0 : clamp(p[0], 24.0, sw - 24.0);
@@ -414,7 +445,7 @@ public final class RadarHudClientTicker {
 
         boolean aligned = RadarHud.seekerRing.aligned();
         RadarHud.seekerModel.update(0.05, true, aligned, offBoresight, range,
-                RadarHud.lockedClosure, RadarHud.selectedSpec);
+                closure, RadarHud.selectedSpec);
         RadarHud.lockProgress = (float) RadarHud.seekerModel.progress();
     }
 

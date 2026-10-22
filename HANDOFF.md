@@ -1,9 +1,28 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-22
-状态：BVR 管线、ECM 删除、RWR 居中、导弹 ticket/看门狗已完成并构建；待重启游戏实测。
+状态：BVR 回滚后按新要求重做——BVR 能力保留、BVR 专属 UI 全部移除（恢复旧版 UI + 少量必需项）；雷达弹导引头进度 TRK/TWS 通用化 + 近距离跳段。待构建实测。
 
-## 2026-10-22 BVR 窗口（最新）
+## 2026-10-22 BVR UI 裁剪 + 导引头通用化（最新）
+
+### 用户决议
+- “我不想要这些多出来的ui” → 回放 pre-BVR 渲染器基线（`74b5a8f`），但用户又明确“我需要超视距功能”→ **保留全部 BVR 后端管线，移除 BVR 专属视觉**。
+- 面板/主屏 BVR 相关：不再画琥珀空心符号、主屏 1000b 标记、顶部刻度；`ACQ BVR`/`TRK BVR` 模式字样删除（复用 `ACQ PD`/`TRK PD`）。保留的功能性 HUD：`drawGuidanceLine` 支持 `bvrLockedUuid`、导弹点支持 `guidanceMissileUuid` 数据链航迹。
+- 导引头新规（用户原话）：“导引头锁定逻辑 trk、tws 模式都是通用的，注意只有硬/软锁定才能打开导引头”。
+
+### 本轮改动
+1. **RadarHudRenderer 回到 pre-BVR 基线**（`git checkout 74b5a8f -- ...`），再补最小改动：RWR 字母/MSL 标签居中（移植）、BVR 模式字样复用 ACQ/TRK PD、`lineVisible`/导弹点两处功能性分支。
+2. **`updateRadarSeeker` 通用目标源**（`RadarHudClientTicker`）：硬锁定 > TWS 当前软跟踪（`TwsTrack` 实体，含 alive 校验）> BVR 远程 TRK（`BvrState.lagCompensatedPosition`，无本地实体，sourceId 取 UUID 负哈希避免与实体 id 冲突）。`closure` 按源取：硬锁 `lockedClosure`、TWS `twsTrack.closure`、BVR `bvrLockedClosure`。换源/失源时重置 `seekerRing`/`seekerModel`。
+3. **`SeekerLockModel` 近距离跳段**（战雷观感：信号强度=距离/对轴/接近率）：SEARCHING 时 `quality≥0.85 且 range≤80` 直接 `HIGH`（红双环）；`quality≥0.70 且 range≤150` 直接 `TRACKING`（红色倒计时常开）；否则白色截获段不变。
+4. **渲染器软锁绘制**：`renderCenterRings` 在 TWS 软跟/BVR 锁时不再提前 return（旧缺陷：环根本不画），走 `drawRadarLockLayer`（环套在跟踪目标位置）；无任何源时仍中心白圈。`drawRadarLockLayer` 门限改为“硬锁/TWS 选中/BVR 锁任一存在”。
+5. 发射校验不变：ARH=TWS 软跟/BVR 锁 `seekerEnabledTicks≥10`，本地硬锁 `seekerRing.aligned()`；SARH 服务端仍要求硬锁+TRACKING/HIGH。
+
+### 待办/下次优先
+- 实机验证：TWS 软跟开导引头应见环套跟踪目标（白色→红倒计时→红双环）；BVR 远程锁 ARH 开导引头同样有环与进度；近距离打开环可直接红倒计时/红双环。
+- 构建后 jar 覆盖 `/Users/henry/Desktop/minecraft/versions/1.21.1-NeoForge/mods/`；测试命令 `/minethunder test bvr start` 可用（BVR 后端/测试命令均保留）。
+- `BVR.md` 的 UI 描述段落已过时（琥珀符号被删），下次窗口可顺手改为“无专属 BVR UI，复用普通锁定 UI”。
+
+---
 
 ### 本轮已完成（按用户要求“干所有的”）
 1. **删除 ECM**：`Countermeasure` 只剩 CHAFF/FLARE；`CountermeasurePacket` 去掉 kind=2 映射与 gunpowder 分支（旧存档火药诱饵按箔条读取）；`SensorDebugCommand.test cm ecm`、`SensorDebugRenderer` ECM 文案、`FullFeatureTest` 相关 spawn/文案全部移除；文档（STATUS/SPEC/REQUIREMENTS）已同步。

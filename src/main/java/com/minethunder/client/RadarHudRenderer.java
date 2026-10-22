@@ -3,8 +3,6 @@ package com.minethunder.client;
 import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.MissileSpec;
-import com.minethunder.radar.BvrKind;
-import com.minethunder.radar.BvrTrack;
 import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarIconType;
 import com.minethunder.radar.RadarMode;
@@ -57,7 +55,6 @@ public final class RadarHudRenderer {
         renderCenterRings(g, screenW, screenH);
         renderTargetLock(g, screenW, screenH);
         renderTwsOverlay(g, screenW, screenH);
-        renderBvrOverlay(g, screenW, screenH);
         renderSeekerMessage(g, screenW, screenH);
     }
 
@@ -110,9 +107,9 @@ public final class RadarHudRenderer {
         } else if (RadarHud.locked) {
             modeText = "TRK PD";
         } else if (RadarHud.bvrAcquiring) {
-            modeText = "ACQ BVR";
+            modeText = "ACQ PD";
         } else if (RadarHud.bvrLockedUuid != null) {
-            modeText = "TRK BVR";
+            modeText = "TRK PD";
         }
         int outsideY = py - 11;
         g.drawString(mc.font, modeText, px, outsideY, GREEN, false);
@@ -125,9 +122,6 @@ public final class RadarHudRenderer {
 
         // 目标回波
         drawContacts(g, px, py, size);
-
-        // BVR 远程航迹（空心符号；一直显示，本地回波优先）
-        drawBvrTracks(g, mc, px, py, size);
 
         // 导弹引导线：从面板中心指向目标/惯性预测点
         drawGuidanceLine(g, px, py, size);
@@ -424,116 +418,6 @@ public final class RadarHudRenderer {
         drawCircle(g, tx, ty, Math.max(3, (int) Math.round(size * 0.012)), GREEN);
     }
 
-    // ===================== BVR 远程航迹显示 =====================
-
-    /** 面板上的 BVR 航迹：空心符号（玩家=菱形，AI=圆圈，导弹=小方框）。 */
-    private static void drawBvrTracks(GuiGraphics g, Minecraft mc, int px, int py, int size) {
-        if (mc.player == null || !RadarHud.radarOn) return;
-        Vec3 eye = mc.player.getEyePosition();
-        double range = Math.max(RadarHud.effectiveRange(), 1.0);
-        int nowTick = mc.player.tickCount;
-        for (BvrTrack track : BvrState.active()) {
-            if (track.uuid().equals(mc.player.getUUID())) continue;
-            // 己方导弹由引导线与白色实点表达，不再画面板符号。
-            if (track.kind() == BvrKind.MISSILE
-                    && mc.player.getUUID().equals(track.ownerUuid())) continue;
-            RadarEcho echo = RadarHud.echoes.get(track.uuid());
-            if (echo != null && !echo.expired(nowTick)) continue;
-            Vec3 predicted = BvrState.lagCompensatedPosition(track);
-            double dist = eye.distanceTo(predicted);
-            Vec3 to = predicted.subtract(eye);
-            Vec3 look = mc.player.getViewVector(1.0F).normalize();
-            Vec3 right = look.cross(new Vec3(0, 1, 0));
-            if (right.lengthSqr() < 1e-6) right = new Vec3(1, 0, 0);
-            right = right.normalize();
-            double az = Math.toDegrees(Math.atan2(to.dot(right), to.dot(look)));
-            int bx = Math.round(px + size / 2f
-                    + (float) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2.0)));
-            int by = Math.round(py + size
-                    - (float) (Math.min(dist, range) / range * size));
-            bx = Math.max(px + 3, Math.min(px + size - 4, bx));
-            by = Math.max(py + 12, Math.min(py + size - 3, by));
-            boolean locked = track.uuid().equals(RadarHud.bvrLockedUuid);
-            boolean acquiring = track.uuid().equals(RadarHud.bvrLockedUuid)
-                    && RadarHud.bvrAcquiring && nowTick / 10 % 2 == 0;
-            int color = locked ? WHITE
-                    : alphaColor(AMBER, dist > range ? 0.7f : 1.0f);
-            if (acquiring) color = WHITE;
-            switch (track.kind()) {
-                case PLAYER -> drawDiamondOutline(g, bx, by, locked ? 6 : 5, color);
-                case AI -> drawCircleOutline(g, bx, by, locked ? 6 : 5, color);
-                case MISSILE -> drawSquareOutline(g, bx, by, 3, color);
-                case SURFACE -> drawSquareOutline(g, bx, by, 2, color);
-            }
-            // 超出当前量程的目标在面板顶部留一个小刻度提示 BVR 仍在探测中。
-            if (dist > range && track.kind().isAir()) {
-                g.fill(bx - 1, py + 9, bx + 1, py + 11, color);
-            }
-        }
-    }
-
-    /** 主画面 BVR 标记：本地点位之外仍在 1000 格内的空中目标。 */
-    private static void renderBvrOverlay(GuiGraphics g, int screenW, int screenH) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || !RadarHud.radarOn) return;
-        Vec3 eye = mc.player.getEyePosition();
-        for (BvrTrack track : BvrState.active()) {
-            if (track.uuid().equals(mc.player.getUUID())) continue;
-            if (track.kind() == BvrKind.MISSILE) continue;
-            RadarEcho echo = RadarHud.echoes.get(track.uuid());
-            if (echo != null && !echo.expired(mc.player.tickCount)) continue;
-            Vec3 predicted = BvrState.lagCompensatedPosition(track);
-            double dist = eye.distanceTo(predicted);
-            if (dist <= RadarHud.effectiveRange()) continue;
-            float[] sp = worldToScreen(predicted, mc.player, screenW, screenH);
-            if (sp == null) continue;
-            int x = (int) sp[0];
-            int y = (int) sp[1];
-            boolean locked = track.uuid().equals(RadarHud.bvrLockedUuid);
-            boolean acquiring = track.uuid().equals(RadarHud.bvrLockedUuid)
-                    && RadarHud.bvrAcquiring && mc.player.tickCount / 10 % 2 == 0;
-            int color = locked ? WHITE
-                    : alphaColor(AMBER, track.kind() == BvrKind.PLAYER ? 0.95f : 0.8f);
-            if (acquiring) color = WHITE;
-            drawDiamondOutline(g, x, y, locked ? 7 : 6, color);
-            if (locked) {
-                drawSquareOutline(g, x, y, 11, color);
-            }
-            String label = (int) dist + " b";
-            g.drawString(mc.font, label, x + 9, y - 4,
-                    locked ? WHITE : AMBER, false);
-            if (track.kind() == BvrKind.PLAYER && !locked && !track.name().isEmpty()) {
-                g.drawString(mc.font, track.name(), x + 9, y + 4, AMBER, false);
-            }
-        }
-    }
-
-    private static void drawDiamondOutline(GuiGraphics g, int cx, int cy, int r, int color) {
-        g.fill(cx, cy - r, cx + 1, cy - r + 2, color);
-        g.fill(cx, cy + r - 1, cx + 1, cy + r + 1, color);
-        g.fill(cx - r, cy, cx - r + 2, cy + 1, color);
-        g.fill(cx + r - 1, cy, cx + r + 1, cy + 1, color);
-        g.fill(cx - r / 2, cy - r / 2 - 1, cx - r / 2 + 2, cy - r / 2 + 1, color);
-        g.fill(cx + r / 2 - 1, cy - r / 2 - 1, cx + r / 2 + 1, cy - r / 2 + 1, color);
-        g.fill(cx - r / 2, cy + r / 2 - 1, cx - r / 2 + 2, cy + r / 2 + 1, color);
-        g.fill(cx + r / 2 - 1, cy + r / 2 - 1, cx + r / 2 + 1, cy + r / 2 + 1, color);
-    }
-
-    private static void drawCircleOutline(GuiGraphics g, int cx, int cy, int r, int color) {
-        for (int dy = -r; dy <= r; dy++) {
-            int dx = (int) Math.round(Math.sqrt((double) r * r - dy * dy));
-            g.fill(cx - dx, cy + dy, cx - dx + 1, cy + dy + 1, color);
-            g.fill(cx + dx - 1, cy + dy, cx + dx, cy + dy + 1, color);
-        }
-        int w = Math.max(1, r - 1);
-        g.fill(cx - w, cy - r, cx + w + 1, cy - r + 1, color);
-        g.fill(cx - w, cy + r, cx + w + 1, cy + r + 1, color);
-    }
-
-    private static void drawSquareOutline(GuiGraphics g, int cx, int cy, int half, int color) {
-        drawRectBorder(g, cx - half, cy - half, half * 2, half * 2, color);
-    }
-
     private static void drawDashedLine(GuiGraphics g, int x1, int y1, int x2, int y2, int color) {
         int dx = x2 - x1;
         int dy = y2 - y1;
@@ -624,10 +508,15 @@ public final class RadarHudRenderer {
 
         boolean radarGuided = RadarHud.selectedMissile == MissileSpec.Guidance.SARH
                 || RadarHud.selectedMissile == MissileSpec.Guidance.ARH;
-        // TWS 的雷达弹导引头环画在当前跟踪框上；硬锁定后再走中心保持/瞬移/倒计时流程。
+        // TRK/TWS 通用：无硬锁定但有 TWS 软跟踪或 BVR 远程 TRK 时，
+        // 导引头环画在当前跟踪目标上，同样走白/红倒计时流程。
+        TwsTrack softTrack = radarGuided && !RadarHud.locked
+                && RadarHud.currentMode == RadarMode.TWS
+                && TwsTrackManager.selected() != null ? TwsTrackManager.selected() : null;
         if (radarGuided && !RadarHud.locked) {
-            if (RadarHud.currentMode == RadarMode.TWS
-                    && TwsTrackManager.selected() != null) {
+            if (softTrack != null || RadarHud.bvrLockedUuid != null) {
+                drawRadarLockLayer(g, mc, screenW, screenH,
+                        Math.max(0.55f, HudScale.factor(screenW, screenH)));
                 return;
             }
             float ui = Math.max(0.55f, HudScale.factor(screenW, screenH));
@@ -676,9 +565,13 @@ public final class RadarHudRenderer {
 
     }
 
-    /** 雷达导引头：中心白环 → 瞬移锁位 → 白/红倒计时 → 红色双环。 */
+    /** 雷达导引头：中心白环 → 瞬移锁位 → 白/红倒计时 → 红色双环；硬锁/TWS/BVR 源通用。 */
     private static void drawRadarLockLayer(GuiGraphics g, Minecraft mc, int screenW, int screenH, float ui) {
-        if (RadarHud.lockedEntity == null) return;
+        boolean hasTarget = RadarHud.lockedEntity != null
+                || (RadarHud.currentMode == RadarMode.TWS
+                && TwsTrackManager.selected() != null)
+                || RadarHud.bvrLockedUuid != null;
+        if (!hasTarget) return;
         double rx = RadarHud.seekerRing.x();
         double ry = RadarHud.seekerRing.y();
         int cx = (int) Math.max(24, Math.min(screenW - 24, rx > 0 ? rx : screenW / 2.0));
