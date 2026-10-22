@@ -36,7 +36,8 @@ public record RadarSyncPacket(int targetId, int seekerState, int radarMode,
 
     public void handle(IPayloadContext context) {
         if (context.player() instanceof ServerPlayer player) {
-            ServerRadarState.update(player, targetId, seekerState, radarMode,
+            // BVR 远程锁定不随雷达快照被清空，由服务端自行续期/校验。
+            ServerRadarState.refreshLockState(player, targetId, seekerState, radarMode,
                     hardLock, radarOn, trackQuality);
         }
     }
