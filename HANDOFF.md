@@ -1,9 +1,33 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-22
-状态：BVR 回滚后按新要求重做——BVR 能力保留、BVR 专属 UI 全部移除（恢复旧版 UI + 少量必需项）；雷达弹导引头进度 TRK/TWS 通用化 + 近距离跳段。待构建实测。
+状态：BVR 无专属 UI 化完成（面板按普通目标样式、主屏普通绿框）+ 导引头近距直开双环修正 + 朝向非理想位置进度回退。待构建实测。
 
-## 2026-10-22 BVR UI 裁剪 + 导引头通用化（最新）
+## 2026-10-22 BVR 面板/主屏显示 + 导引头修正（最新）
+
+### 用户反馈与决议
+- "开 bvr 验证雷达界面没有目标" → 根因：客户端本地扫描拉不到 600 格实体，BVR 面板绘制在上一轮裁剪中被整删，`BvrState` 航迹同步存在但无人绘制。→ 用户的“不要多余 UI”指**不要琥珀新区视觉**，不是不要目标显示。
+- 新显示决议：面板 BVR 航迹全部按普通目标样式显示（未锁定 80% 透明度绿/锁定白亮，同当前 mode 符号，本地回波优先，TWS 面板同款圆点+航向线，不参与 Alt+T 选中）；BVR 远程锁定主屏画与本地 TRK **完全相同**的绿色框（名称来自 `BvrTrack.name()`，速度/航向由 `track.velocity()` 推导，格式与本地一致；ACQ 阶段不画框）。
+- "雷达弹在 20 格内还是没触发双环" → 旧跳段阈值 0.85/80 在 MC 场景达不到（悬停低闭路时 quality≈0.72；ARH 死对轴≈0.83）。
+- "摆动=朝向摆到非理想位置应减进度" → 用户澄清摆动指**把导引头/机头轴摆离目标**：进度需随之回退。
+
+### 本轮改动
+1. **`SeekerLockModel`**：跳段改为 `q≥0.60 且 ≤40 b → HIGH`、`q≥0.80 且 ≤80 b → HIGH`、`q≥0.55 且 ≤120 b → TRACKING`；离轴 >35% 万向角起 `progress/stability` 按 `(off/gimbal-0.35)*0.9/秒` 回退；TRACKING 离轴 >75% 或质量跌破回白圈；HIGH 离轴 >60% 退回红倒计时（stability=0.5）。ACQUIRING 进度≤0 直接回 SEARCHING。
+2. **`RadarHudRenderer`**：
+   - `drawContacts` 尾部加 BVR 航迹循环：跳过自己/本机导弹/本地新鲜回波重影；`mode.accepts(kind→AIR/SEA)`；量程内画普通符号（icon 模式 `RadarIconType` 同款+运动短线，横线模式同款横线），STT 只显示锁定者；无琥珀/无顶边刻度/无选中竖线。
+   - `drawTwsContacts` 尾部：BVR 空中航迹同款圆点+`drawHeadingLine`（速度版）。
+   - `renderTargetLock`：新增 BVR 分支（普通绿框+名称/距离/接近率/速度航向，`worldToScreen(null)` 时隐藏）；ACQ 分支要求本地实体（远程 ACQ 不画框）。
+   - `drawMotionVector` 拆出 `(velocity, targetPos)` 重载，echo 版委托。
+3. `BVR.md`/`SEEKER_HUD.md` 同步；后端未动。
+
+### 待办/下次优先
+- 实测：`/minethunder test bvr start` → 600/1000 档面板普通样式目标 → Alt+F → TRK PD + 主屏绿框 → ARH 发射全流程。
+- 实测导引头：20 格悬停靶死对轴开导引头应直接红双环；把机头拉开（离轴 >35%）进度应肉眼倒退，>75% 万向角掉白圈。
+- 若"近距双环"还嫌慢，可再把 `SKIP_TO_HIGH_QUALITY` 降到 0.5 或提高 rangeMargin 权重。
+
+
+
+## 2026-10-22 BVR UI 裁剪 + 导引头通用化（上一轮）
 
 ### 用户决议
 - “我不想要这些多出来的ui” → 回放 pre-BVR 渲染器基线（`74b5a8f`），但用户又明确“我需要超视距功能”→ **保留全部 BVR 后端管线，移除 BVR 专属视觉**。

@@ -3,9 +3,12 @@ package com.minethunder.client;
 import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.MissileSpec;
+import com.minethunder.radar.BvrKind;
+import com.minethunder.radar.BvrTrack;
 import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarIconType;
 import com.minethunder.radar.RadarMode;
+import com.minethunder.radar.RadarTargetClass;
 import com.minethunder.radar.RwrContact;
 import com.minethunder.radar.RwrManager;
 import com.minethunder.radar.RwrThreat;
@@ -229,6 +232,63 @@ public final class RadarHudRenderer {
                 }
             }
         }
+
+        // BVR 远程航迹：与普通目标完全相同的样式/颜色（无专属符号），数据来自服务端同步。
+        Vec3 bvrEye = mc.player.getEyePosition();
+        Vec3 bvrLook = mc.player.getViewVector(1.0F).normalize();
+        Vec3 bvrRight = bvrLook.cross(new Vec3(0, 1, 0));
+        if (bvrRight.lengthSqr() < 1.0E-6) bvrRight = new Vec3(1, 0, 0);
+        bvrRight = bvrRight.normalize();
+        for (BvrTrack track : BvrState.active()) {
+            if (mc.player.getUUID().equals(track.uuid())) continue;
+            if (track.kind() == BvrKind.MISSILE
+                    && mc.player.getUUID().equals(track.ownerUuid())) continue;
+            RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
+            if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
+            RadarTargetClass bvrClass = switch (track.kind()) {
+                case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+                case SURFACE -> RadarTargetClass.SEA;
+            };
+            if (!RadarHud.currentMode.accepts(bvrClass)) continue;
+            Vec3 predicted = BvrState.lagCompensatedPosition(track);
+            double dist = bvrEye.distanceTo(predicted);
+            if (dist > range || dist < 0.1) continue;
+            boolean isLockedBvr = RadarHud.bvrLockedUuid != null
+                    && RadarHud.bvrLockedUuid.equals(track.uuid());
+            if (RadarHud.currentMode == RadarMode.STT && !isLockedBvr) continue;
+            Vec3 toBvr = predicted.subtract(bvrEye);
+            double az = Math.toDegrees(Math.atan2(toBvr.dot(bvrRight), toBvr.dot(bvrLook)));
+            int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2));
+            int by = py + size - (int) (dist / range * size);
+            if (bx < px + 2 || bx >= px + size - 2 || by < py + 12 || by >= py + size - 2) continue;
+            boolean iconModeBvr = RadarHud.currentMode != RadarMode.SRC_PD
+                    && RadarHud.currentMode != RadarMode.ACQ_PD
+                    && RadarHud.currentMode != RadarMode.GMI
+                    && RadarHud.currentMode != RadarMode.SEA;
+            if (iconModeBvr) {
+                RadarIconType icon = switch (track.kind()) {
+                    case PLAYER -> RadarIconType.PLAYER;
+                    case AI -> RadarIconType.LIVING;
+                    case MISSILE -> RadarIconType.MISSILE;
+                    case SURFACE -> RadarIconType.BLOCK;
+                };
+                int color = alphaColor(isLockedBvr ? WHITE : GREEN, isLockedBvr ? 1f : 0.8f);
+                drawContactIcon(g, bx, by, icon, color);
+                drawMotionVector(g, mc, track.velocity(), predicted, bx, by,
+                        Math.max(6, (int) Math.round(size * 0.03)), color);
+            } else {
+                int shortLen = Math.max(6, (int) Math.round(size * 0.028));
+                int thick = Math.max(1, (int) Math.round(size * 0.007));
+                if (isLockedBvr) {
+                    int color = alphaColor(GREEN, 1f);
+                    g.fill(bx - 2, by - 2, bx + 3, by + 3, color);
+                    g.fill(bx - 1, by - 3, bx + 2, by + 4, color);
+                } else {
+                    g.fill(bx - shortLen / 2, by - thick / 2,
+                            bx + shortLen / 2, by + thick / 2 + 1, alphaColor(GREEN, 0.8f));
+                }
+            }
+        }
     }
 
     private static void drawTwsContacts(GuiGraphics g, Minecraft mc, int px, int py,
@@ -255,6 +315,33 @@ public final class RadarHudRenderer {
                 g.fill(bx - dx, by - vLen / 2, bx - dx + 2, by + vLen / 2, GREEN);
                 g.fill(bx + dx, by - vLen / 2, bx + dx + 2, by + vLen / 2, GREEN);
             }
+        }
+
+        // BVR 远程空中航迹：与 TWS 接触同款圆点/航向线，不参与选中；本地回波优先。
+        Vec3 bvrEye = mc.player.getEyePosition();
+        Vec3 bvrLook = mc.player.getViewVector(1.0F).normalize();
+        Vec3 bvrRight = bvrLook.cross(new Vec3(0, 1, 0));
+        if (bvrRight.lengthSqr() < 1.0E-6) bvrRight = new Vec3(1, 0, 0);
+        bvrRight = bvrRight.normalize();
+        for (BvrTrack track : BvrState.active()) {
+            if (mc.player.getUUID().equals(track.uuid())) continue;
+            if (track.kind() != BvrKind.PLAYER && track.kind() != BvrKind.AI) continue;
+            RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
+            if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
+            Vec3 predicted = BvrState.lagCompensatedPosition(track);
+            double dist = bvrEye.distanceTo(predicted);
+            if (dist > range || dist < 0.1) continue;
+            Vec3 toBvr = predicted.subtract(bvrEye);
+            double az = Math.toDegrees(Math.atan2(toBvr.dot(bvrRight), toBvr.dot(bvrLook)));
+            int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2));
+            int by = py + size - (int) (dist / range * size);
+            if (bx < px + 2 || bx >= px + size - 2 || by < py + 12
+                    || by >= py + size - 2) continue;
+            boolean lockedBvr = RadarHud.bvrLockedUuid != null
+                    && RadarHud.bvrLockedUuid.equals(track.uuid());
+            int color = alphaColor(lockedBvr ? WHITE : GREEN, lockedBvr ? 1f : 0.7f);
+            drawFilledCircle(g, bx, by, lockedBvr ? 3 : 2, color);
+            drawHeadingLine(g, mc, track.velocity(), bx, by, color);
         }
     }
 
@@ -326,15 +413,21 @@ public final class RadarHudRenderer {
 
     private static void drawMotionVector(GuiGraphics g, Minecraft mc, RadarEcho echo,
                                          int x, int y, int length, int color) {
-        if (echo.velocity.lengthSqr() < 1.0E-5) return;
+        drawMotionVector(g, mc, echo.velocity, echo.position, x, y, length, color);
+    }
+
+    /** 运动方向短线：BVR 航迹版本（无本地实体，直接用同步速度/预测位置）。 */
+    private static void drawMotionVector(GuiGraphics g, Minecraft mc, Vec3 velocity,
+                                         Vec3 targetPos, int x, int y, int length, int color) {
+        if (velocity.lengthSqr() < 1.0E-5) return;
         Vec3 look = mc.player.getViewVector(1.0F).normalize();
         Vec3 right = look.cross(new Vec3(0, 1, 0));
         if (right.lengthSqr() < 1.0E-6) return;
         right = right.normalize();
-        Vec3 to = echo.position.subtract(mc.player.getEyePosition());
+        Vec3 to = targetPos.subtract(mc.player.getEyePosition());
         if (to.lengthSqr() < 1.0E-6) return;
-        double lateral = echo.velocity.dot(right);
-        double rangeRate = echo.velocity.dot(to.normalize());
+        double lateral = velocity.dot(right);
+        double rangeRate = velocity.dot(to.normalize());
         double magnitude = Math.hypot(lateral, rangeRate);
         if (magnitude < 1.0E-4) return;
         int ex = x + (int) Math.round(lateral / magnitude * length);
@@ -605,10 +698,12 @@ public final class RadarHudRenderer {
     private static void renderTargetLock(GuiGraphics g, int screenW, int screenH) {
         Minecraft mc = Minecraft.getInstance();
         Entity target = RadarHud.lockedEntity;
-        if (target == null) return;
+        if (target == null && RadarHud.bvrLockedUuid == null) return;
 
-        // ACQ PD 尝试锁定：四角框固定在发起时的扫描点，即使当前选中的是 IR 弹也显示。
+        // ACQ PD 尝试锁定：四角闪烁框，固定在发起时的扫描点，即使当前选中的是 IR 弹也显示。
+        // BVR 远程截获阶段没有本地实体位置，不画额外框，仅靠 ACQ PD 模式字样提示。
         if (RadarHud.lockAcquiring) {
+            if (target == null) return;
             Vec3 anchor = RadarHud.lockAnchorPosition;
             if (anchor == null || anchor.lengthSqr() < 1.0E-6) {
                 anchor = target.getBoundingBox().getCenter();
@@ -625,6 +720,39 @@ public final class RadarHudRenderer {
             String label = "ACQ PD";
             g.drawString(mc.font, label, ax - mc.font.width(label) / 2,
                     ay - half - 13, GREEN, false);
+            return;
+        }
+
+        // BVR 远程 TRK：与本地锁定完全相同的绿色框样式，数据来自 BVR 数据链航迹。
+        if (target == null) {
+            if (RadarHud.bvrAcquiring) return;
+            BvrTrack bvrTarget = RadarHud.bvrLockedUuid == null ? null
+                    : BvrState.get(RadarHud.bvrLockedUuid);
+            if (bvrTarget == null) return;
+            Vec3 bvrPos = BvrState.lagCompensatedPosition(bvrTarget);
+            float[] p = worldToScreen(bvrPos, mc.player, screenW, screenH);
+            if (p == null) return;
+            int tx = (int) p[0];
+            int ty = (int) p[1];
+            float ui = Math.max(0.65f, HudScale.factor(screenW, screenH));
+            int b = Math.max(12, Math.round(LOCK_BOX_HALF * ui));
+            drawRectBorder(g, tx - b, ty - b, b * 2, b * 2, GREEN);
+
+            String name = bvrTarget.name();
+            if (name == null || name.isEmpty()) name = "?";
+            String info = String.format("%.1f b",
+                    mc.player.getEyePosition().distanceTo(bvrPos));
+            String closure = String.format("%.0f b/s", RadarHud.bvrLockedClosure);
+            int off = Math.max(20, Math.round(40 * ui));
+            Vec3 velocity = bvrTarget.velocity();
+            double speed = velocity.horizontalDistance() * 20.0;
+            int heading = Math.round(((float) (Math.toDegrees(
+                    Math.atan2(-velocity.x, velocity.z)) % 360) + 360) % 360);
+            String data = String.format("%.0f b/s  %d°", speed, heading);
+            g.drawString(mc.font, data, tx - mc.font.width(data) / 2, ty - off - 12, GREEN, false);
+            g.drawString(mc.font, name, tx - mc.font.width(name) / 2, ty - off, GREEN, false);
+            g.drawString(mc.font, info, tx - mc.font.width(info) / 2, ty + b + 4, GREEN, false);
+            g.drawString(mc.font, closure, tx - mc.font.width(closure) / 2, ty + b + 14, GREEN, false);
             return;
         }
 

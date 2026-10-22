@@ -31,12 +31,20 @@ public final class SeekerLockModel {
     private static final double EXIT_QUALITY = 0.40;
     private static final double GIMBAL_EXIT_MARGIN_DEG = 3.0;
 
-    // 战雷表现：信号足够强（近距离/正对轴/高接近率）时打开导引头直接进入红色倒计时；
-    // 极近距离且质量很高时直接红色双环（完全锁定）。
-    private static final double SKIP_TO_TRACKING_QUALITY = 0.70;
-    private static final double SKIP_TO_TRACKING_MAX_RANGE = 150.0;
-    private static final double SKIP_TO_HIGH_QUALITY = 0.85;
-    private static final double SKIP_TO_HIGH_MAX_RANGE = 80.0;
+    // 近距离/高质量信号直跳：≤40 b 高质量（含悬停近靶）直接红双环；≤120 b 直接红倒计时。
+    private static final double SKIP_TO_HIGH_QUALITY = 0.60;
+    private static final double SKIP_TO_HIGH_MAX_RANGE = 40.0;
+    private static final double SKIP_TO_FAR_HIGH_QUALITY = 0.80;
+    private static final double SKIP_TO_FAR_HIGH_MAX_RANGE = 80.0;
+    private static final double SKIP_TO_TRACKING_QUALITY = 0.55;
+    private static final double SKIP_TO_TRACKING_MAX_RANGE = 120.0;
+
+    // 朝向摆到非理想位置（离轴 > 万向角 35%）时，进度按离轴比例持续回退；
+    // 越接近轴线极限退得越快，锁定因此退回上一阶段。
+    private static final double AIM_DEGRADE_START = 0.35;
+    private static final double AIM_DEGRADE_RATE = 0.9;
+    private static final double TRACKING_EXIT_OFF_FRAC = 0.75;
+    private static final double HIGH_EXIT_OFF_FRAC = 0.60;
 
     private State state = State.SEARCHING;
     private double progress;
@@ -127,6 +135,10 @@ public final class SeekerLockModel {
                 && range <= spec.maxDistance
                 && quality >= EXIT_QUALITY;
 
+        // 离轴角在万向角内的相对开销：>35% 起进度回退，越靠边越狠。
+        double offFrac = offBoresightDeg / gimbal;
+        double aimDegrade = Math.max(0.0, offFrac - AIM_DEGRADE_START);
+
         // 离轴角超出万向角（带退出滞回）→ 导引头看不到目标，回到单白圈。
         if (offBoresightDeg > gimbal + GIMBAL_EXIT_MARGIN_DEG) {
             state = State.SEARCHING;
@@ -137,7 +149,12 @@ public final class SeekerLockModel {
 
         switch (state) {
             case SEARCHING -> {
-                if (quality >= SKIP_TO_HIGH_QUALITY
+                if (quality >= SKIP_TO_FAR_HIGH_QUALITY
+                        && range <= SKIP_TO_FAR_HIGH_MAX_RANGE) {
+                    state = State.HIGH;
+                    progress = 1.0;
+                    stability = 1.0;
+                } else if (quality >= SKIP_TO_HIGH_QUALITY
                         && range <= SKIP_TO_HIGH_MAX_RANGE) {
                     state = State.HIGH;
                     progress = 1.0;
@@ -153,10 +170,15 @@ public final class SeekerLockModel {
             }
             case ACQUIRING -> {
                 progress += dt * (0.35 + quality * 0.65) / ACQUIRE_SECONDS;
+                // 朝向拉离理想位置：进度持续回退。
+                progress -= dt * AIM_DEGRADE_RATE * aimDegrade;
                 if (progress >= 1.0) {
                     progress = 1.0;
                     state = State.TRACKING;
                     stability = 0.0;
+                } else if (progress <= 0.0) {
+                    progress = 0.0;
+                    state = State.SEARCHING;
                 } else if (quality < LOSE_QUALITY) {
                     progress -= dt * 1.2;
                     if (progress <= 0.0) {
@@ -166,18 +188,22 @@ public final class SeekerLockModel {
                 }
             }
             case TRACKING -> {
-                stability = clamp(stability + dt / STABILITY_SECONDS, 0.0, 1.0);
+                stability = clamp(stability + dt / STABILITY_SECONDS
+                        - dt * AIM_DEGRADE_RATE * aimDegrade * 1.5, 0.0, 1.0);
                 if (stability >= 1.0 && inEnvelope && quality >= ENTER_QUALITY) {
                     state = State.HIGH;
-                } else if (quality < EXIT_QUALITY && !inEnvelope) {
+                } else if (offFrac > TRACKING_EXIT_OFF_FRAC
+                        || (quality < EXIT_QUALITY && !inEnvelope)) {
+                    // 朝向摆出理想位置：红色倒计时退回白色截获段。
                     state = State.ACQUIRING;
-                    progress = clamp(progress - dt * 0.8, 0.15, 1.0);
+                    progress = Math.max(0.3, progress);
                 }
             }
             case HIGH -> {
-                if (!inEnvelope || quality < EXIT_QUALITY) {
+                if (offFrac > HIGH_EXIT_OFF_FRAC || !inEnvelope
+                        || quality < EXIT_QUALITY) {
                     state = State.TRACKING;
-                    stability = clamp(stability - dt * 0.5, 0.0, 1.0);
+                    stability = 0.5;
                 }
             }
         }
