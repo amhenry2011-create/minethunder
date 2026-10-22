@@ -23,7 +23,9 @@ public final class Network {
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
         registrar.playToClient(SensorDebugPacket.TYPE, SensorDebugPacket.STREAM_CODEC,
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
-        registrar.playToClient(RwrSyncPacket.TYPE, RwrSyncPacket.STREAM_CODEC,
+        registrar.playToClient(BvrSyncPacket.TYPE, BvrSyncPacket.STREAM_CODEC,
+                (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
+        registrar.playToServer(BvrLockPacket.TYPE, BvrLockPacket.STREAM_CODEC,
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
     }
 

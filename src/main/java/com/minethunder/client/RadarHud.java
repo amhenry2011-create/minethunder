@@ -147,6 +147,15 @@ public final class RadarHud {
     /** 当前锁定的目标 */
     @Nullable
     public static net.minecraft.world.entity.Entity lockedEntity = null;
+    /** BVR 远程锁定目标（ARH 数据链专用，可能超出客户端实体跟踪范围） */
+    @Nullable
+    public static UUID bvrLockedUuid = null;
+    public static String bvrLockedName = "";
+    public static double bvrLockedDistance = 0;
+    public static double bvrLockedClosure = 0;
+    /** 正在尝试建立 BVR 远程锁定 */
+    public static boolean bvrAcquiring = false;
+    public static int bvrAcquireTicks = 0;
     /** 当前选中的弹种（决定 HUD 显示红外圆环还是雷达锁定环） */
     public static MissileSpec.Guidance selectedMissile = MissileSpec.Guidance.IR;
     /** 当前选中导弹的完整参数（决定 HUD 圆环尺寸与发射包线） */
@@ -206,6 +215,8 @@ public final class RadarHud {
     public static boolean guidanceLineActive = false;
     public static int guidanceTargetId = -1;
     public static int guidanceMissileId = -1;
+    @Nullable
+    public static UUID guidanceMissileUuid = null;
     public static double guidanceMissileAzimuthDeg = 0;
     public static double guidanceMissileDistance = 0;
     public static double guidanceTargetAzimuthDeg = 0;

@@ -42,7 +42,7 @@
 ### 对抗措施（`com.minethunder.countermeasure`）
 | 文件 | 说明 |
 |------|------|
-| `Countermeasure.java` | 类型枚举（Chaff/Flare/ECM + 威胁类型） |
+| `Countermeasure.java` | 类型枚举（Chaff/Flare + 威胁类型） |
 | `CountermeasureEntity.java` | 假目标实体（欺骗来袭导弹） |
 
 ### 客户端（`com.minethunder.client`）
@@ -126,7 +126,7 @@ ls build/libs
 1. **验证编译与构建**：✅ `compileJava` 和 `build` 均已通过。
 2. **接入雷达 HUD**：`SeekerLockModel` 红/白稳定环、`SeekerRingSlew` 抛放、惯性重投影与导弹引导线均已接入；`AircraftRadar` 尚未作为独立实例驱动 HUD（当前由客户端扫描 + 同步状态）。
 3. **导弹发射链**：✅ 弓发射 → 导弹箭 → 目标写入 → 制导 → 近炸/自爆；SARH 失锁惯性/自爆、ARH pitbull、IR 导引头已接。
-4. **对抗**：✅ Chaff/Flare 服务端实体、Alt+E 组合键一次释放两种、导弹诱饵；ECM 当前按雷达假目标处理，尚未做主动压制。
+4. **对抗**：✅ Chaff/Flare 服务端实体、Alt+E 组合键一次释放两种、导弹诱饵。ECM 已按用户要求删除。
 5. **键位→逻辑**：✅ 锁定/模式/弹种/雷达/菜单/挂架/对抗；发射由弓完成。
 6. **运行验证**：构建通过；`/tmp/SeekerLockTest.java`、`/tmp/SeekerRingTest.java`、Demo 测试通过；尚未做 `runClient` 游戏内实测。
 7. **OP 调试工具**：`/minethunder sensor` 中文传感器视觉已接入，待游戏内检查标签布局与遮挡。
@@ -148,7 +148,7 @@ ls build/libs
 5. **导弹**：SARH 照射、ARH 末段开机、IR 热源/Flare、FOV/万向角、比例导引、能量模型、近炸引信、发射包线。
 6. **HUD**：白/红锁定圈时序、发射后显示、横向发射评估线与不可逃逸区、地平线/陀螺仪稳定参考线。
 7. **RWR**：多辐射源威胁库、地面搜索雷达模型、搜索/锁定/发射告警。
-8. **对抗措施**：Chaff/Flare/ECM、39 机动、能量规避。
+8. **对抗措施**：Chaff/Flare、39 机动、能量规避。ECM 已删除。
 9. **多人同步**：服务器权威的雷达/锁定/导弹/对抗状态与延迟处理。
 10. **其他模式**：数据链、GMI/SEA、空对地/对海、键位配置、性能与平衡。
 11. **导弹提示线（发射包线）**：最大有效射程、不可逃逸区上下边界、最小可控/转弯距离必须由当前导弹的 MissileSpec 与目标状态（高度/速度/接近率）实时计算，不能写死；Demo 目前用导弹 profile 示意随弹种切换，Mod 需接入真实包线/动力/导引头数据。
@@ -161,7 +161,7 @@ ls build/libs
 
 17. **服务端锁定同步与发射校验**：新增 `com.minethunder.network`（`RadarSyncPacket`、`CountermeasurePacket`）与 `ServerRadarState`。客户端每 20 tick 或状态变化时同步锁定目标、导引头状态、雷达模式；服务端在 `MissileEvents` 中校验锁定目标、SARH 白单圈、射程、扫描角、地形遮挡、PD 多普勒盲区，再允许弓发射。`MissileItem` 在生成导弹时写入服务端锁定目标与 SARH 发射者。
 
-18. **对抗措施**：`Alt+E` 同时释放箔条与热焰弹，不占用单独快捷键；服务端生成两个 `CountermeasureEntity`（箔条=雪球外观，热焰弹=火焰弹外观；寿命 100 tick，组合键 10 tick 冷却）。导弹在导引头视场内优先追踪能欺骗自己的假目标；箔条/ECM 对雷达弹、热焰弹对红外弹有效。
+18. **对抗措施**：`Alt+E` 同时释放箔条与热焰弹，不占用单独快捷键；服务端生成两个 `CountermeasureEntity`（箔条=雪球外观，热焰弹=火焰弹外观；寿命 100 tick，组合键 10 tick 冷却）。导弹在导引头视场内优先追踪能欺骗自己的假目标；箔条对雷达弹、热焰弹对红外弹有效。ECM 已按用户要求移除（旧存档火药诱饵按箔条读取）。
 
 19. **SARH 失锁**：`SarhMissileArrow` 读取服务端锁定状态；失锁后不再修正航向，超过 `prolongationTimeMax` 自爆。锁定恢复则重新制导。
 
@@ -169,7 +169,7 @@ ls build/libs
 
 21. **导弹引导线**：导弹飞行期间雷达面板从中心到目标/惯性预测点绘制虚线；ARH 按 `seekerActivationRange` 在线上绘制小横杠（pitbull 点）。引导线终点与惯性小圈共用同一世界位置投影，机头转动时一起移动。
 
-22. **仍待完善**：数据链/GMI/SEA 模式、TWS 多目标航迹管理、ECM 主动压制（当前为雷达假目标）、真实服务端雷达扫描权威（目前服务端校验锁定目标但雷达扫描仍在客户端）、更多游戏内实测。
+22. **仍待完善**：数据链/GMI/SEA 模式、TWS 多目标航迹管理、真实服务端雷达扫描权威（目前服务端校验锁定目标但雷达扫描仍在客户端）、更多游戏内实测。
 
 23. **导弹制导时间自爆**：所有 `MissileArrow` 在 `age / 20.0 > spec.timeLife` 时立即 `detonate(null)`，不做无控惯性坠落；该规则已在代码与本文档中固定。
 

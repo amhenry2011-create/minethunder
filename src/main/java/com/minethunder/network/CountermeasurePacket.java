@@ -56,16 +56,10 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
                 deployed = true;
             }
         } else {
-            Countermeasure countermeasure = switch (kind) {
-                case 1 -> Countermeasure.FLARE;
-                case 2 -> Countermeasure.ECM;
-                default -> Countermeasure.CHAFF;
-            };
-            Item required = switch (countermeasure) {
-                case FLARE -> Items.FIRE_CHARGE;
-                case ECM -> Items.GUNPOWDER;
-                case CHAFF -> Items.SNOWBALL;
-            };
+            Countermeasure countermeasure = kind == 1
+                    ? Countermeasure.FLARE : Countermeasure.CHAFF;
+            Item required = countermeasure == Countermeasure.FLARE
+                    ? Items.FIRE_CHARGE : Items.SNOWBALL;
             int count = consume(player, required, 3);
             if (count > 0) {
                 spawnBurst(player, countermeasure, count);
@@ -111,8 +105,8 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
                 player.getY() + 0.2,
                 player.getZ() + player.getRandom().nextDouble() * 0.8 - 0.4);
         entity.setOwner(player);
-        entity.setItem(new ItemStack(kind == Countermeasure.FLARE ? Items.FIRE_CHARGE
-                : kind == Countermeasure.ECM ? Items.GUNPOWDER : Items.SNOWBALL));
+        entity.setItem(new ItemStack(kind == Countermeasure.FLARE
+                ? Items.FIRE_CHARGE : Items.SNOWBALL));
         entity.setDeltaMovement(
                 player.getRandom().nextDouble() * 0.28 - 0.14,
                 0.35 + player.getRandom().nextDouble() * 0.2,

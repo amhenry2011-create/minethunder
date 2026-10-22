@@ -7,12 +7,15 @@ import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.network.Network;
+import com.minethunder.network.BvrLockPacket;
 import com.minethunder.network.RadarSyncPacket;
 import com.minethunder.network.RwrPaintPacket;
+import com.minethunder.radar.BvrTrack;
 import com.minethunder.radar.RadarContact;
 import com.minethunder.radar.RadarMode;
 import com.minethunder.radar.RadarTargetClass;
 import com.minethunder.radar.RadarCore;
+import com.minethunder.radar.ServerRadarState;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
@@ -63,6 +66,7 @@ public final class RadarHudClientTicker {
     private static boolean lastSentHardLock = false;
     private static boolean lastSentRadarOn = true;
     private static float lastSentTrackQuality = 1f;
+    private static java.util.UUID lastSentBvrUuid = null;
     private static RadarMode lastMode = RadarMode.SRC_PD;
     /** 当前扫描行与上一 tick 的扫描位置，用于构造本 tick 扫过段。 */
     private static int scanRow = -1;
@@ -126,7 +130,9 @@ public final class RadarHudClientTicker {
                 }
             }
         }
-        RadarHud.missileInFlight = anyMissileInFlight;
+        // 超视距发射的导弹超出客户端实体跟踪范围时，用服务端 BVR 航迹维持。
+        boolean ownBvrMissile = BvrState.hasOwnMissile(player.getUUID());
+        RadarHud.missileInFlight = anyMissileInFlight || ownBvrMissile;
         boolean missileStarted = !missileWasInFlight && RadarHud.missileInFlight;
         boolean missileEnded = missileWasInFlight && !RadarHud.missileInFlight;
         missileWasInFlight = RadarHud.missileInFlight;
@@ -151,6 +157,9 @@ public final class RadarHudClientTicker {
             RadarHud.echoes.clear();
             RadarHud.lockedEntity = null;
             RadarHud.locked = false;
+            RadarHud.bvrAcquiring = false;
+            RadarHud.bvrLockedUuid = null;
+            RadarHud.bvrLockedName = "";
             RadarHud.lockProgress = 0f;
             RadarHud.seekerModel.reset();
             RadarHud.seekerInertial = false;
@@ -287,6 +296,13 @@ public final class RadarHudClientTicker {
             updateLockAcquisition(player, nowTick);
         }
 
+        // BVR 远程锁定：建立/维护数据链软锁；本地硬锁优先。
+        if (RadarHud.bvrAcquiring) {
+            tickBvrAcquisition(player, nowTick);
+        } else if (RadarHud.bvrLockedUuid != null) {
+            maintainBvrLock(player, nowTick);
+        }
+
         // TRK PD 是连续跟踪模式：直接读目标实时状态，不依赖扫描线命中。
         Entity locked = RadarHud.lockedEntity;
         if (locked != null && RadarHud.locked && !RadarHud.lockAcquiring) {
@@ -333,9 +349,15 @@ public final class RadarHudClientTicker {
                 || RadarHud.radarOn != lastSentRadarOn
                 || Math.abs(quality - lastSentTrackQuality) > 0.02f;
         boolean refresh = mc.player != null && mc.player.tickCount - lastSentTick >= 20;
-        if (changed || refresh) {
+        java.util.UUID bvr = RadarHud.bvrLockedUuid;
+        boolean bvrChanged = !java.util.Objects.equals(bvr, lastSentBvrUuid);
+        if (changed || refresh || bvrChanged) {
             Network.sendToServer(new RadarSyncPacket(targetId, state, mode, hardLock,
                     RadarHud.radarOn, quality));
+            if (bvrChanged) {
+                Network.sendToServer(new BvrLockPacket(bvr));
+                lastSentBvrUuid = bvr;
+            }
             lastSentTargetId = targetId;
             lastSentSeekerState = state;
             lastSentMode = mode;
@@ -586,17 +608,31 @@ public final class RadarHudClientTicker {
             TwsTrack track = TwsTrackManager.selected();
             target = track == null ? null : TwsTrackManager.entity(track.entityId);
         }
-        if (target == null) {
-            RadarHud.guidanceLineActive = false;
-            return;
+        RadarHud.guidanceLineActive = target != null
+                || RadarHud.bvrLockedUuid != null;
+        if (target != null) {
+            RadarHud.guidanceTargetId = target.getId();
+            RadarHud.guidanceLastWorldPosition = target.getBoundingBox().getCenter();
+        } else {
+            RadarHud.guidanceTargetId = -1;
+            // BVR 锁定：目标不在客户端实体范围内，端点由 BVR 航迹维护。
+            if (RadarHud.bvrLockedUuid != null) {
+                BvrTrack bvr = BvrState.get(RadarHud.bvrLockedUuid);
+                if (bvr != null) {
+                    RadarHud.guidanceLastWorldPosition =
+                            BvrState.lagCompensatedPosition(bvr);
+                }
+            }
         }
-        RadarHud.guidanceLineActive = true;
-        RadarHud.guidanceTargetId = target.getId();
-        RadarHud.guidanceLastWorldPosition = target.getBoundingBox().getCenter();
         RadarHud.guidancePitbullRange = RadarHud.selectedSpec == null
                 ? 0 : RadarHud.selectedSpec.seekerActivationRange;
         RadarHud.guidanceIsArh = RadarHud.selectedMissile == MissileSpec.Guidance.ARH;
         RadarHud.guidanceMissileId = findOwnMissileId();
+        Minecraft mc = Minecraft.getInstance();
+        if (RadarHud.guidanceMissileId < 0 && mc.player != null) {
+            BvrTrack missile = BvrState.ownMissile(mc.player.getUUID());
+            RadarHud.guidanceMissileUuid = missile == null ? null : missile.uuid();
+        }
     }
 
     private static int findOwnMissileId() {
@@ -614,6 +650,8 @@ public final class RadarHudClientTicker {
                 id = e.getId();
             }
         }
+        BvrTrack bvr = BvrState.ownMissile(mc.player.getUUID());
+        RadarHud.guidanceMissileUuid = id >= 0 ? null : (bvr == null ? null : bvr.uuid());
         return id;
     }
 
@@ -623,11 +661,13 @@ public final class RadarHudClientTicker {
         if (!RadarHud.missileInFlight) {
             RadarHud.guidanceLineActive = false;
             RadarHud.guidanceMissileId = -1;
+            RadarHud.guidanceMissileUuid = null;
             return;
         }
         Entity missile = RadarHud.guidanceMissileId >= 0
                 ? mc.level.getEntity(RadarHud.guidanceMissileId) : null;
         if (missile != null) {
+            RadarHud.guidanceMissileUuid = null;
             Vec3 toMissile = missile.getBoundingBox().getCenter().subtract(player.getEyePosition());
             Vec3 view = player.getViewVector(1.0F).normalize();
             Vec3 right = view.cross(new Vec3(0, 1, 0));
@@ -636,6 +676,21 @@ public final class RadarHudClientTicker {
             RadarHud.guidanceMissileDistance = toMissile.length();
             RadarHud.guidanceMissileAzimuthDeg = Math.toDegrees(
                     Math.atan2(toMissile.dot(right), toMissile.dot(view)));
+        } else if (RadarHud.guidanceMissileUuid != null && mc.player != null) {
+            BvrTrack bvrMissile = BvrState.get(RadarHud.guidanceMissileUuid);
+            if (bvrMissile == null)
+                bvrMissile = BvrState.ownMissile(mc.player.getUUID());
+            if (bvrMissile != null) {
+                Vec3 missilePos = BvrState.lagCompensatedPosition(bvrMissile);
+                Vec3 toMissile = missilePos.subtract(player.getEyePosition());
+                Vec3 view = player.getViewVector(1.0F).normalize();
+                Vec3 right = view.cross(new Vec3(0, 1, 0));
+                if (right.lengthSqr() < 1e-6) right = new Vec3(1, 0, 0);
+                right = right.normalize();
+                RadarHud.guidanceMissileDistance = toMissile.length();
+                RadarHud.guidanceMissileAzimuthDeg = Math.toDegrees(
+                        Math.atan2(toMissile.dot(right), toMissile.dot(view)));
+            }
         }
         Vec3 pos;
         if (RadarHud.seekerInertial) {
@@ -651,6 +706,14 @@ public final class RadarHudClientTicker {
         if (target != null) {
             pos = target.getBoundingBox().getCenter();
             RadarHud.guidanceLastWorldPosition = pos;
+        } else if (RadarHud.bvrLockedUuid != null) {
+            BvrTrack bvr = BvrState.get(RadarHud.bvrLockedUuid);
+            if (bvr != null) {
+                pos = BvrState.lagCompensatedPosition(bvr);
+                RadarHud.guidanceLastWorldPosition = pos;
+            } else {
+                pos = RadarHud.guidanceLastWorldPosition;
+            }
         } else {
             pos = RadarHud.guidanceLastWorldPosition;
         }
@@ -803,8 +866,17 @@ public final class RadarHudClientTicker {
             cancelLockAttempt("取消尝试锁定");
             return;
         }
+        if (RadarHud.bvrAcquiring) {
+            cancelBvrLock("取消远程尝试锁定");
+            return;
+        }
         if (RadarHud.locked) {
             dropLock("解除锁定");
+            return;
+        }
+        if (RadarHud.bvrLockedUuid != null) {
+            cancelBvrLock("解除 BVR 远程锁定");
+            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
             return;
         }
 
@@ -820,12 +892,10 @@ public final class RadarHudClientTicker {
                 }
             }
             Entity entity = echo == null ? null : TwsTrackManager.entity(echo.entityId);
-            if (entity == null || !entity.isAlive()) {
-                RadarHud.lastLockMessage = "无有效回波";
-                return;
-            }
-            if (echo == null) {
-                RadarHud.lastLockMessage = "无有效回波";
+            if (entity == null || !entity.isAlive() || echo == null) {
+                if (!beginBvrLockAcquisition()) {
+                    RadarHud.lastLockMessage = "无有效回波";
+                }
                 return;
             }
             beginLockAcquisition(entity, echo.azimuthDeg, echo.range, echo.position);
@@ -847,7 +917,9 @@ public final class RadarHudClientTicker {
             if (best == null || echo.range < best.range) best = echo;
         }
         if (best == null) {
-            RadarHud.lastLockMessage = "无有效回波";
+            if (!beginBvrLockAcquisition()) {
+                RadarHud.lastLockMessage = "无有效回波";
+            }
             return;
         }
         Entity entity = TwsTrackManager.entity(best.entityId);
@@ -856,6 +928,96 @@ public final class RadarHudClientTicker {
             return;
         }
         beginLockAcquisition(entity, best.azimuthDeg, best.range, best.position);
+    }
+
+    /**
+     * 无本地回波时回退：对 BVR 远程航迹发起 ARH 数据链软锁。
+     * 仅空中目标、512 格以外（近距离依赖本地扫描）、仅 ARH 弹种。
+     */
+    private static boolean beginBvrLockAcquisition() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || !RadarHud.radarOn) return false;
+        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH) return false;
+        Vec3 eye = mc.player.getEyePosition();
+        Vec3 look = mc.player.getViewVector(1.0F).normalize();
+        BvrTrack best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (BvrTrack track : BvrState.active()) {
+            if (!track.kind().isAir()) continue;
+            if (track.uuid().equals(mc.player.getUUID())) continue;
+            Vec3 predicted = BvrState.lagCompensatedPosition(track);
+            double distance = eye.distanceTo(predicted);
+            if (distance < 512.0 || distance > ServerRadarState.BVR_LOCK_RANGE) continue;
+            double az = Math.toDegrees(RadarCore.azimuthBetween(look,
+                    predicted.subtract(eye)));
+            double azScore = Math.abs(az - RadarHud.scanAzimuthOffsetDeg);
+            double score = (azScore <= 60.0 ? azScore : 1000.0 + azScore) + distance * 0.001;
+            if (score < bestScore) {
+                bestScore = score;
+                best = track;
+            }
+        }
+        if (best == null) return false;
+        RadarHud.bvrAcquiring = true;
+        RadarHud.bvrAcquireTicks = 0;
+        RadarHud.bvrLockedUuid = best.uuid();
+        RadarHud.bvrLockedName = best.name();
+        updateBvrInfo(mc.player, best);
+        RadarHud.lastLockMessage = "ACQ PD 远程尝试锁定";
+        return true;
+    }
+
+    private static void tickBvrAcquisition(Player player, int tick) {
+        BvrTrack track = RadarHud.bvrLockedUuid == null
+                ? null : BvrState.get(RadarHud.bvrLockedUuid);
+        if (!RadarHud.radarOn || track == null || !track.kind().isAir()
+                || player.getUUID().equals(track.uuid())) {
+            cancelBvrLock("尝试锁定失败");
+            return;
+        }
+        if (RadarHud.locked || RadarHud.lockAcquiring) {
+            // 本地扫描锁定优先，静默放弃远程软锁。
+            cancelBvrLock(null);
+            return;
+        }
+        updateBvrInfo(player, track);
+        RadarHud.bvrAcquireTicks++;
+        if (RadarHud.bvrAcquireTicks >= RadarHud.LOCK_ACQUIRE_TICKS) {
+            RadarHud.bvrAcquiring = false;
+            Network.sendToServer(new BvrLockPacket(RadarHud.bvrLockedUuid));
+            RadarHud.lastLockMessage = "TRK PD 远程锁定";
+        }
+    }
+
+    private static void maintainBvrLock(Player player, int tick) {
+        BvrTrack track = RadarHud.bvrLockedUuid == null
+                ? null : BvrState.get(RadarHud.bvrLockedUuid);
+        if (!RadarHud.radarOn || RadarHud.locked || RadarHud.lockAcquiring
+                || track == null || !track.kind().isAir()) {
+            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
+            cancelBvrLock("BVR 远程失锁");
+            return;
+        }
+        updateBvrInfo(player, track);
+    }
+
+    private static void updateBvrInfo(Player player, BvrTrack track) {
+        Vec3 predicted = BvrState.lagCompensatedPosition(track);
+        double distance = player.getEyePosition().distanceTo(predicted);
+        Vec3 velocity = track.velocity();
+        Vec3 to = predicted.subtract(player.getEyePosition()).normalize();
+        RadarHud.bvrLockedDistance = distance;
+        RadarHud.bvrLockedClosure = -velocity.dot(to);
+    }
+
+    private static void cancelBvrLock(@Nullable String message) {
+        RadarHud.bvrAcquiring = false;
+        RadarHud.bvrAcquireTicks = 0;
+        RadarHud.bvrLockedUuid = null;
+        RadarHud.bvrLockedName = "";
+        RadarHud.bvrLockedDistance = 0;
+        RadarHud.bvrLockedClosure = 0;
+        if (message != null) RadarHud.lastLockMessage = message;
     }
 
     private static void beginLockAcquisition(Entity entity, double az, double range, Vec3 anchor) {
@@ -1011,6 +1173,8 @@ public final class RadarHudClientTicker {
         RadarHud.lockAlpha = 0f;
         RadarHud.lockLostTicks = 0;
         RadarHud.lockAnchorPosition = Vec3.ZERO;
+        RadarHud.bvrAcquiring = false;
+        RadarHud.bvrAcquireTicks = 0;
         RadarHud.seekerInertial = false;
         RadarHud.seekerModel.reset();
         RadarHud.seekerRing.resetToCenter(0, 0);
@@ -1258,6 +1422,7 @@ public final class RadarHudClientTicker {
     private static boolean hasRadarSeekerSource() {
         return RadarHud.selectedMissile == MissileSpec.Guidance.IR
                 || (RadarHud.locked && RadarHud.lockedEntity != null)
+                || RadarHud.bvrLockedUuid != null
                 || (RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null);
     }
@@ -1310,6 +1475,7 @@ public final class RadarHudClientTicker {
 
     private static void reset() {
         RwrState.clear();
+        BvrState.clear();
         paintSentTicks.clear();
         RadarHud.contacts.clear();
         RadarHud.lockedEntity = null;
@@ -1349,6 +1515,10 @@ public final class RadarHudClientTicker {
         RadarHud.acmReturnMode = RadarMode.SRC_PD;
         RadarHud.acmCooldownTicks = 0;
         RadarHud.seekerEnabledTicks = 0;
+        RadarHud.bvrAcquiring = false;
+        RadarHud.bvrAcquireTicks = 0;
+        RadarHud.bvrLockedUuid = null;
+        RadarHud.bvrLockedName = "";
         RadarHud.seekerModel.reset();
         RadarHud.seekerRing.resetToCenter(0, 0);
         // 不在这里立刻发“解除锁定”：松手发射的同一 tick 可能还没被服务端处理。
@@ -1360,6 +1530,7 @@ public final class RadarHudClientTicker {
         lastSentHardLock = false;
         lastSentRadarOn = true;
         lastSentTrackQuality = 1f;
+        lastSentBvrUuid = null;
         lastSentTick = -100;
         lockTicks = 0;
         inertialTicks = 0;

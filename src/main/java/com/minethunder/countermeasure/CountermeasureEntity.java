@@ -43,13 +43,13 @@ public class CountermeasureEntity extends ThrowableItemProjectile {
 
     public Countermeasure type() {
         if (getItem().is(Items.FIRE_CHARGE)) return Countermeasure.FLARE;
-        if (getItem().is(Items.GUNPOWDER)) return Countermeasure.ECM;
+        // 旧存档里的火药诱饵按箔条处理，避免读取旧实体时崩溃。
         return Countermeasure.CHAFF;
     }
 
     public boolean deceives(Countermeasure.MissileThreat threat) {
         return switch (threat) {
-            case RADAR -> type() == Countermeasure.CHAFF || type() == Countermeasure.ECM;
+            case RADAR -> type() == Countermeasure.CHAFF;
             case INFRARED -> type() == Countermeasure.FLARE;
         };
     }

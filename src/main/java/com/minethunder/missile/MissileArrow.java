@@ -70,6 +70,8 @@ public abstract class MissileArrow extends AbstractArrow {
     protected Vec3 servoAcceleration = Vec3.ZERO;
     /** 导引头 LOS 的上一帧方向，用于 rateMax 跟踪速率限制。 */
     @Nullable protected Vec3 guidanceLosDir;
+    /** 低速看门狗：非测试弹低速悬停计数（滑翔段阻力清零属于异常）。 */
+    protected int slowSpeedTicks;
 
     private static final int DATALINK_UPDATE_TICKS = 4;
     private static final double SERVO_TAU = 0.08;
@@ -112,10 +114,22 @@ public abstract class MissileArrow extends AbstractArrow {
         return detonating;
     }
 
-    /** 当前导弹是否有可用的载机雷达数据链（硬锁定或 TWS 跟踪）。 */
+    /** 当前导弹是否有可用的载机雷达数据链（硬锁定、TWS 跟踪或 BVR 远程软锁）。 */
     protected boolean datalinkValid() {
         if (spec.guidance == MissileSpec.Guidance.IR) return false;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return false;
+        if (spec.guidance == MissileSpec.Guidance.SARH) return datalinkValidLocal();
+        if (!(getOwner() instanceof ServerPlayer player)) return false;
+        ServerRadarState.LockState state = ServerRadarState.get(player);
+        if (state == null || targetId == null) return false;
+        Entity target = getTarget();
+        if (target == null || !target.isAlive()) return false;
+        UUID bvr = state.bvrTargetUuid();
+        if (state.targetId() < 0 && bvr != null && bvr.equals(targetId)) return true;
+        return datalinkValidLocal();
+    }
+
+    private boolean datalinkValidLocal() {
         if (!(getOwner() instanceof ServerPlayer player)) return false;
         ServerRadarState.LockState state = ServerRadarState.get(player);
         if (state == null || state.targetId() < 0 || targetId == null) return false;
@@ -213,6 +227,7 @@ public abstract class MissileArrow extends AbstractArrow {
         tag.putFloat("MTTrackQuality", trackQuality);
         tag.putInt("MTMeasuredTick", measuredTargetTick);
         tag.putInt("MTLastKnownTick", lastKnownTargetTick);
+        tag.putInt("MTSlowTicks", slowSpeedTicks);
         putVec(tag, "MTMeasuredPos", measuredTargetPos);
         putVec(tag, "MTMeasuredVel", measuredTargetVelocity);
         putVec(tag, "MTMeasuredAccel", measuredTargetAcceleration);
@@ -237,6 +252,7 @@ public abstract class MissileArrow extends AbstractArrow {
         trackQuality = tag.getFloat("MTTrackQuality");
         measuredTargetTick = tag.getInt("MTMeasuredTick");
         lastKnownTargetTick = tag.getInt("MTLastKnownTick");
+        slowSpeedTicks = tag.getInt("MTSlowTicks");
         measuredTargetPos = readVec(tag, "MTMeasuredPos");
         measuredTargetVelocity = readVecOrZero(tag, "MTMeasuredVel");
         measuredTargetAcceleration = readVecOrZero(tag, "MTMeasuredAccel");
@@ -390,9 +406,23 @@ public abstract class MissileArrow extends AbstractArrow {
             }
         }
 
-        // 命中地面/方块由服务端销毁。
+        // 地面/水面接触由服务端销毁。
         if (!level().isClientSide && (onGround() || isInWater())) {
             detonate(null);
+        }
+
+        // 低速看门狗：制导/阻力异常导致悬停时提前引爆，避免导弹永久悬浮卡空。
+        if (!level().isClientSide && !testMissile) {
+            boolean enginePre = age / 20.0 < spec.ignitionDelay();
+            double mps = getDeltaMovement().length() * 20.0;
+            if (!enginePre && age > 40 && mps < STALL_SPEED_MPS) {
+                if (++slowSpeedTicks >= SLOW_TICKS_BEFORE_DETONATE) {
+                    detonate(null);
+                    return;
+                }
+            } else {
+                slowSpeedTicks = 0;
+            }
         }
     }
 
@@ -625,14 +655,24 @@ public abstract class MissileArrow extends AbstractArrow {
         }
     }
 
-    /** 中段数据链更新：载机锁定/TWS 目标变化时切换导弹目标。 */
+    /** 中段数据链更新：载机锁定/TWS/BVR 目标变化时切换导弹目标。 */
     protected void updateDatalinkTarget() {
         if (level().isClientSide || spec.guidance == MissileSpec.Guidance.IR) return;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return;
         if (!(getOwner() instanceof ServerPlayer player)) return;
         ServerRadarState.LockState state = ServerRadarState.get(player);
-        if (state == null || state.targetId() < 0) return;
+        if (state == null) return;
         if (!(level() instanceof ServerLevel serverLevel)) return;
+        if (state.targetId() < 0) {
+            // BVR 远程锁定：ARH 专用数据链。
+            if (spec.guidance != MissileSpec.Guidance.ARH) return;
+            UUID bvr = state.bvrTargetUuid();
+            if (bvr == null || bvr.equals(targetId)) return;
+            Entity next = serverLevel.getEntity(bvr);
+            if (next == null || !next.isAlive()) return;
+            setTarget(next);
+            return;
+        }
         Entity next = serverLevel.getEntity(state.targetId());
         if (next == null || !next.isAlive()) return;
         if (spec.guidance == MissileSpec.Guidance.SARH
@@ -659,8 +699,12 @@ public abstract class MissileArrow extends AbstractArrow {
         datalinkUpdateCooldown = DATALINK_UPDATE_TICKS;
         if (!(getOwner() instanceof ServerPlayer player)) return;
         ServerRadarState.LockState state = ServerRadarState.get(player);
-        if (state == null || state.targetId() != target.getId()) return;
-        trackQuality = state.trackQuality();
+        if (state == null) return;
+        UUID bvr = state.bvrTargetUuid();
+        boolean bvrMatch = state.targetId() < 0 && bvr != null && bvr.equals(targetId);
+        if (!bvrMatch && state.targetId() != target.getId()) return;
+        trackQuality = bvrMatch ? Math.max(0.55f, state.trackQuality())
+                : state.trackQuality();
 
         // 低质量航迹有概率丢帧；丢帧期间导弹继续使用旧测量做 IOG。
         if (!testMissile && level().random.nextFloat() < (1.0f - trackQuality) * 0.10f) {
@@ -863,6 +907,11 @@ public abstract class MissileArrow extends AbstractArrow {
     private static final float EXPLOSION_DAMAGE = 25.0F;
     /** 爆炸半径 */
     private static final float EXPLOSION_RADIUS = 1.5F;
+
+    /** 低于该速度（m/s）视为抛锚/悬停异常。 */
+    private static final double STALL_SPEED_MPS = 15.0;
+    /** 异常低速持续 tick 数，超过即引爆。 */
+    private static final int SLOW_TICKS_BEFORE_DETONATE = 40;
 
     @Override
     protected ItemStack getDefaultPickupItem() {

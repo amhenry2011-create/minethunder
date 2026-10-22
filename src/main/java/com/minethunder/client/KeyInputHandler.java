@@ -375,15 +375,18 @@ public final class KeyInputHandler {
         MissileSpec.Guidance chosen = chooseFireGuidance(mc);
         boolean twsArh = RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null;
+        boolean bvrLock = chosen == MissileSpec.Guidance.ARH
+                && RadarHud.bvrLockedUuid != null;
         boolean arhSource = twsArh
-                || (RadarHud.locked && RadarHud.lockedEntity != null);
+                || (RadarHud.locked && RadarHud.lockedEntity != null)
+                || bvrLock;
         if (chosen == MissileSpec.Guidance.ARH && !arhSource) {
             notifyClient(mc, Component.literal(
                     "没有有效的雷达锁定或 TWS 跟踪"));
             return;
         }
         if (chosen == MissileSpec.Guidance.ARH) {
-            boolean ready = twsArh
+            boolean ready = (twsArh || bvrLock)
                     ? RadarHud.seekerEnabledTicks >= 10
                     : RadarHud.seekerRing.aligned();
             if (!ready) {
@@ -409,7 +412,9 @@ public final class KeyInputHandler {
         RadarHud.selectedSpec = specFor(chosen);
         int targetId = chosen == MissileSpec.Guidance.IR
                 ? RadarHud.seekerLockedEntity.getId() : -1;
-        Network.sendToServer(new MissileFirePacket(chosen.ordinal(), targetId));
+        java.util.UUID bvrUuid = chosen == MissileSpec.Guidance.ARH
+                ? RadarHud.bvrLockedUuid : null;
+        Network.sendToServer(new MissileFirePacket(chosen.ordinal(), targetId, bvrUuid));
         RadarHudClientTicker.closeSeekerAfterLaunch();
         notifyClient(mc, Component.literal("导引头：关闭"));
     }

@@ -1,7 +1,95 @@
 # MineThunder 交接 / 下次继续
 
-日期：2026-10-19
-状态：已迁移到 NeoForge 21.1.236；构建成功并复制到 NeoForge mods；未启动游戏，等待用户实机验收基础功能。
+日期：2026-10-22
+状态：BVR 管线、ECM 删除、RWR 居中、导弹 ticket/看门狗已完成并构建；待重启游戏实测。
+
+## 2026-10-22 BVR 窗口（最新）
+
+### 本轮已完成（按用户要求“干所有的”）
+1. **删除 ECM**：`Countermeasure` 只剩 CHAFF/FLARE；`CountermeasurePacket` 去掉 kind=2 映射与 gunpowder 分支（旧存档火药诱饵按箔条读取）；`SensorDebugCommand.test cm ecm`、`SensorDebugRenderer` ECM 文案、`FullFeatureTest` 相关 spawn/文案全部移除；文档（STATUS/SPEC/REQUIREMENTS）已同步。
+2. **RWR/RWR 面板文字居中**：`RadarHudRenderer.renderRwr` 字母与 `drawMslLabel` 改浮点坐标 + `lineHeight` 垂直居中。
+3. **导弹区块 ticket + 低速看门狗**：新建 `radar/BvrTicketService.java`（`TicketType.FORCED` radius=2 forceTicks；`MissileArrow` 与 `minethunder_bvr` 标签实体每 5 tick 维护，上限 64）；`MissileArrow` 低速看门狗：非测试弹、点火后、`age>40`、速度<15 m/s 持续 40 tick 自爆，`slowSpeedTicks` 已入 NBT（`MTSlowTicks`）。
+
+4. **BVR 全管线**（详见 `BVR.md`）：
+   - 服务端：`BvrTrackManager`（2 tick 快照：玩家/带标签实体/导弹，1000 b，非本机导弹 600 b）+ `BvrSyncPacket`；`ServerRadarState` 增 `bvrTargetUuid`（AIR、16..1000 b 校验）；`BvrLockPacket` 远程软锁；`canLaunchArh`/`MissileFirePacket`（新 `bvrTargetUuid` 字段）支持 BVR 发射；ARH 数据链 `updateDatalinkTarget`/`datalinkValid` 按 UUID；RWR 对方被 BVR 锁时显示 T。
+   - 客户端：`BvrState` 缓存（30 tick 过期）；面板空心琥珀符号（菱形/圆/方框，超量程钳边+顶部刻度）、主屏 1000 b 内空中目标标记、`ACQ BVR`/`TRK BVR` 模式字样；Alt+F 无本地回波时回退 BVR 锁（20 tick，ARH-only，`seekerEnabledTicks>=10` 即可发射）；发射线用 `guidanceMissileUuid` + BVR 自机导弹航迹延长；`missileInFlight` 合并 BVR 航迹；被锁玩家 RWR 显示 T 威胁。
+   - 测试命令：`/minethunder test bvr start|clear`（600 格 BVR-TEST-7 幻影，区块 ticket 保活，缓慢接近）。
+   - 导弹/目标 ticket 保证数据链目标在服务端一直 tick。
+5. **测试目标初速**：`FullFeatureTest.spawnTargetMissile` & `SensorDebugCommand.testtarget missile` 给 0.25~0.3 前向初速，不再 `Vec3.ZERO` 悬停。
+
+### 已知限制 / 下次优先
+- BVR 目标模型不可见（客户端视距硬上限），只有航迹符号与数据链；后续如需远景可评估 Distant Horizons（可选，不做成依赖）。
+- `BVR.md` 的测试步骤未实机验证；下次窗口先开游戏跑 `/minethunder test bvr start` 全流程（锁定→发射→延长引导线→RWR T）。
+- `BvrTrackManager.filter` 目前不基于方位门限，只按距离过滤；如出现面板混乱可加与 `scanAzimuthOffsetDeg` 相关的门限。
+- `PR/样式`：主屏 BVR 标记统一在 `RadarHudRenderer.renderBvrOverlay`；若用户想换成面板-only需求，需在 AGENTS.md 规则下先询问归属（面板 or 主屏）。
+
+### 构建状态
+- 本轮构建后 jar：`build/libs/minethunder-0.1.0.jar`（见 git log 的 release 提交），已复制到 `/Users/henry/Desktop/minecraft/versions/1.21.1-NeoForge/mods/`。
+- 分支 `main`，已推送 origin。
+
+---
+
+## 2026-10-22 窗口关闭交接（上一轮）
+
+### 代码/构建状态
+- 当前分支 `main`，HEAD `74b5a8f`，已推送 `origin/main`；工作区在写本文前是干净的。
+- 构建：`./gradlew build --no-daemon --console=plain`，成功。
+- Jar：`build/libs/minethunder-0.1.0.jar`，SHA-256 `4897eb010e0794a264d5ef2218d40dafb9d8aa1bb8f8d50e6113ed2181be3be7`。
+- 安装路径：`/Users/henry/Desktop/minecraft/versions/1.21.1-NeoForge/mods/minethunder-0.1.0.jar`，已覆盖，需重启游戏加载。
+- 当前游戏进程仍在运行（HMCL/Minecraft）；不要热替换已加载的 jar。
+
+### 本轮已完成
+- 雷达搜索改为逐行窄波束：3° 方位 × 5° 仰角；同一行覆盖扫过段，换行不跨行。
+- 默认搜索档 `120x20`（±60°/±10°，4 行），移除 `240x10`，普通搜索移除 `10 b` 档。
+- TWS 逐行刷新；STT 跳过通用搜索；ACM 保留每 tick 全 ACM 框自动截获。
+- `RadarCore.scanBeam` 使用窄波束 AABB；服务端发射/RWR 继续全扇区 `scan`。
+- 传感器 3D/2D 波束加入 partial tick 和扫描线插值，修复移动/转视角抽搐。
+- 雷达归中改为单独右 Shift（`KeyBindings.RECENTER`），旧 `Alt+V` 移除。
+- 新增测试命令：
+  - `/minethunder test full start|next|stop|status`
+  - `/minethunder test targets`
+  - `/minethunder test dodge arh|sarh|ir`
+  - `/minethunder test rwr all` 及原有 rwr 子命令
+  - `/minethunder test cm chaff|flare|ecm|all`
+  - `/minethunder test kit`
+- `FullFeatureTest` 会临时搭建水域/方块测试场地，`stop` 恢复原方块状态。
+
+### 未完成的用户需求
+1. **删除 ECM**：用户明确不要 ECM。需删 `Countermeasure.ECM`、`CountermeasurePacket` kind=2、`CountermeasureEntity` 火药映射、`FullFeatureTest`/`SensorDebugCommand` 的 `cm ecm`、`SensorDebugRenderer` ECM 文案、相关文档。旧的 gunpowder 诱饵建议按箔条处理，避免存档实体报错。
+2. **RWR 圆圈字母居中**：当前 `RadarHudRenderer.renderRwr` 用整数坐标 `cx - width/2`、`cy - 4`；改为浮点 `drawString`，水平 `cx + 0.5f - width/2f`，垂直按 `font.lineHeight` 居中；必要时加深色底圆。代码没有旋转字形。
+3. **导弹卡在空中**：
+   - `MissileArrow` 没有区块 ticket；服务端模拟距离/客户端视距外会停止 tick 或不同步。
+   - 滑翔段阻力可把速度降到 0，导弹会悬停到 `timeLife`。
+   - 全功能测试里的 `spawnTargetMissile` 使用 `Vec3.ZERO`，测试目标本身静止。
+   - 计划：导弹/目标区块 ticket + 低速看门狗（非测试弹低速 20–40 tick 引爆）+ 测试目标给缓慢初速。
+4. **BVR**：见下节。
+
+### BVR 调研结论
+- 客户端渲染距离/区块跟踪有硬限制：`ChunkMap.TrackedEntity.updatePlayer` 要求目标区块被客户端跟踪；`clientTrackingRange(80)` 只是上限，不能绕过客户端视距。服务端 simulation distance 外不 tick。
+- 1000 b ≈ 62.5 个区块，常规客户端最大视距 32 区块；因此不能靠单纯加区块 ticket 实现“1000 b 完整可见”。
+- **FarSight**（Modrinth `farsight.`，GitHub `dark-yoddha/FarSight`）：最接近“超视距”的现有实现，Paper 服务端插件，动态加载玩家之间区块 + ghost chunks，让原版客户端看更远。**不兼容 NeoForge，且 All Rights Reserved**；只能借鉴“只看必要走廊/幽灵区块”的思路，不能直接安装或复制代码。
+- **Distant Horizons**（Modrinth `distanthorizons`，LGPL-3.0）：NeoForge 1.21.1 可用，提供远距离地形 LOD；**不加载/tick 实体，也不解决导弹和锁定**。可作为可选远景视觉层。
+- **Bobby ReNeoForged**（Modrinth `bobby-reneoforged`，LGPL-3.0）：NeoForge 1.21.1 的 Bobby 非官方移植；缓存/显示服务器已发送区块，不能扩展服务端实体模拟，也不能单独实现 BVR。
+- **Entity View Distance**：Fabric only，且只能调整实体渲染距离，不能绕过服务端模拟/视距。
+
+### BVR 推荐方向
+- 不要把任何“超视距模组”做成硬依赖；否则服务器/其他玩家没装就失效。
+- 推荐自研 **BVR HUD/航迹层**：
+  1. 服务端维护可 BVR 的目标（玩家、带 `minethunder_bvr` 标签的 AI/测试目标、飞行中的导弹）。
+  2. 每 2 tick 发送远程航迹（UUID、位置、速度、类别、距离/方位）到客户端。
+  3. 客户端雷达面板/主画面显示远程符号；600/1000 b 外不要求模型和地形。
+  4. 导弹/目标用区块 ticket 保持服务端 tick；导弹可用自定义 HUD 图标显示，不要求客户端实体渲染。
+  5. `RadarSyncPacket`/`ServerRadarState` 从 int targetId 扩展到 UUID，支持远程锁定；这是中大型重构。
+- 可选接入 Distant Horizons 作为纯客户端远景视觉，但 BVR 功能不依赖它。
+- 对未加载的任意 AI，不能凭空检测；AI 目标需要区块 ticket/标签/测试场地。若必须全图 AI，BVR 不现实或需大幅加载。
+
+### 下一窗口优先顺序
+1. 删 ECM（低风险）。
+2. 修 RWR 字母居中（低风险）。
+3. 导弹区块 ticket + 低速看门狗 + 测试目标初速。
+4. BVR：先做“玩家/测试目标远程航迹 + 导弹 HUD”最小版本；再考虑远程锁定/发射。
+5. 每次改动后构建、复制 jar、提交并推送（按 `minethunder-auto-release` skill）。
+6. 实机测试需重启游戏；不要热替换运行中的 jar。
 
 ## 2026-10-22 现实扫描
 

@@ -346,14 +346,12 @@ public final class SensorDebugRenderer {
             int color = switch (kind) {
                 case CHAFF -> CYAN;
                 case FLARE -> AMBER;
-                case ECM -> BLUE;
             };
             drawDiamond(g, x, y, 6, color);
             String[] lines = {
                     "干扰物：" + switch (kind) {
                         case CHAFF -> "箔条";
                         case FLARE -> "热焰弹";
-                        case ECM -> "ECM";
                     },
                     String.format("剩余：%.1f s", cm.getRemainingTicks() / 20.0),
                     String.format("速度：%.1f b/s", entity.getDeltaMovement().length()),

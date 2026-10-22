@@ -17,6 +17,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.monster.Phantom;
 import net.minecraft.world.phys.Vec3;
@@ -70,6 +71,13 @@ public final class SensorDebugCommand {
                         .then(Commands.literal("targets")
                                 .requires(source -> source.hasPermission(2))
                                 .executes(context -> FullFeatureTest.targets(context.getSource())))
+                        .then(Commands.literal("bvr")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> spawnBvrTarget(context.getSource()))
+                                .then(Commands.literal("start")
+                                        .executes(context -> spawnBvrTarget(context.getSource())))
+                                .then(Commands.literal("clear")
+                                        .executes(context -> clearBvrTargets(context.getSource()))))
                         .then(Commands.literal("dodge")
                                 .requires(source -> source.hasPermission(2))
                                 .executes(context -> FullFeatureTest.dodge(context.getSource(), null))
@@ -91,9 +99,6 @@ public final class SensorDebugCommand {
                                 .then(Commands.literal("flare")
                                         .executes(context -> FullFeatureTest.countermeasures(context.getSource(),
                                                 com.minethunder.countermeasure.Countermeasure.FLARE)))
-                                .then(Commands.literal("ecm")
-                                        .executes(context -> FullFeatureTest.countermeasures(context.getSource(),
-                                                com.minethunder.countermeasure.Countermeasure.ECM)))
                                 .then(Commands.literal("all")
                                         .executes(context -> FullFeatureTest.countermeasures(context.getSource(), null))))
                         .then(Commands.literal("kit")
@@ -235,6 +240,70 @@ public final class SensorDebugCommand {
         if (missile == null) return 0;
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
                 "已生成无伤害来袭测试弹：" + spec.name), false);
+        return 1;
+    }
+
+    /** BVR 测试：在玩家前方 ~600 格生成带区块保活的 AI 目标（缓慢接近）。 */
+    private static int spawnBvrTarget(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("只有玩家可以生成 BVR 测试目标"));
+            return 0;
+        }
+        ServerLevel level = player.serverLevel();
+        Vec3 look = player.getLookAngle().normalize();
+        Vec3 eye = player.getEyePosition();
+        Vec3 pos = null;
+        double spawned = 600.0;
+        for (double d = 600.0; d >= 24.0; d -= 8.0) {
+            Vec3 candidate = eye.add(look.scale(d))
+                    .add(0, Math.min(8.0, (600.0 - d) * 0.06), 0);
+            var chunk = level.getChunkSource();
+            int cx = net.minecraft.core.BlockPos.containing(candidate).getX() >> 4;
+            int cz = net.minecraft.core.BlockPos.containing(candidate).getZ() >> 4;
+            if (chunk.hasChunk(cx, cz)) {
+                pos = candidate;
+                spawned = d;
+                break;
+            }
+        }
+        if (pos == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                    "视线方向已加载区块内找不到 24..600 格位置，请先飞高/开远视距或朝已加载区块看"));
+            return 0;
+        }
+        final double distance = spawned;
+        final Vec3 spawnAt = pos;
+        Phantom phantom = EntityType.PHANTOM.create(level);
+        if (phantom == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("无法生成幻翼"));
+            return 0;
+        }
+        phantom.moveTo(spawnAt.x, spawnAt.y, spawnAt.z, player.getYRot(), 0);
+        phantom.setNoAi(true);
+        phantom.setNoGravity(true);
+        phantom.setDeltaMovement(eye.subtract(spawnAt).normalize().scale(0.35));
+        phantom.setSilent(true);
+        phantom.setCustomName(net.minecraft.network.chat.Component.literal("BVR-TEST-7"));
+        phantom.setCustomNameVisible(true);
+        phantom.addTag(com.minethunder.radar.BvrTicketService.BVR_TAG);
+        level.addFreshEntity(phantom);
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已生成 BVR 测试目标 BVR-TEST-7（" + (int) distance + " 格，区块保活已开启）"), false);
+        return 1;
+    }
+
+    private static int clearBvrTargets(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) return 0;
+        int removed = 0;
+        for (Entity entity : player.serverLevel().getAllEntities()) {
+            if (entity.getTags().contains(com.minethunder.radar.BvrTicketService.BVR_TAG)) {
+                entity.discard();
+                removed++;
+            }
+        }
+        final int count = removed;
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已清除 " + count + " 个 BVR 测试目标"), false);
         return 1;
     }
 

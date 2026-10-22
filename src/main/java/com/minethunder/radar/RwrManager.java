@@ -168,6 +168,9 @@ public final class RwrManager {
                         || state.radarMode() == RadarMode.STT.ordinal()) {
                     threat = RwrThreat.TRACK;
                 }
+            } else if (viewer.getUUID().equals(state.bvrTargetUuid())) {
+                // BVR 远程锁定在对方 RWR 上同样表现为跟踪威胁。
+                threat = RwrThreat.TRACK;
             }
             if (threat != null) {
                 contacts.add(contact(source.getId(), threat, eye, look,

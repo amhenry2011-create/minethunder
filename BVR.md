@@ -1,0 +1,61 @@
+# BVR（超视距）系统
+
+2026-10-22 落地的完整 BVR 管线：服务端远程航迹 → 客户端 HUD → ARH 远程锁定/数据链发射。
+
+## 设计约束
+
+- **客户端视距是硬上限**：模型/地形渲染不会在 32 区块外出现。BVR 只提供“航迹符号 + 数据链”，不追求 1000 b 内实体可见。
+- **不依赖任何第三方视距 mod**（FarSight 不兼容 NeoForge 且闭源；Distant Horizons 只做地形 LOD）。
+- **远程航迹仅发给开雷达的玩家**，避免全图天眼。
+- AI 目标必须带 `minethunder_bvr` 标签（由区块 ticket 保活）才会作为 BVR 航迹发布；未加载的任意 AI 无法凭空检测。
+
+## 组件
+
+| 文件 | 作用 |
+|------|------|
+| `radar/BvrTicketService.java` | 服务端区块 ticket：`TicketType.FORCED`、radius=2（5×5 实体 ticking）、forceTicks。所有 `MissileArrow` + 带 `minethunder_bvr` 标签的实体每 5 tick 维护一个 ticket（上限 64），退出/离线时回收。 |
+| `radar/BvrTrackManager.java` | 每 2 tick 采样快照：玩家（PLAYER）、带标签实体（AIR/SURFACE）、飞行中导弹（MISSILE，含 ownerUuid）。距离过滤：总范围 1000 b；非本机导弹仅 600 b 内；导弹 owner 是 viewer 时全程保留。发送 `BvrSyncPacket`。 |
+| `network/BvrSyncPacket.java` | 服务端→客户端全量航迹：UUID、kind、ownerUuid、name、pos、vel、entityId。 |
+| `network/BvrLockPacket.java` | 客户端→服务端：设置/解除 BVR 远程软锁（UUID）。 |
+| `radar/ServerRadarState.java` | `LockState` 增加 `bvrTargetUuid`；`validateBvrTarget`（同维度、AIR、16..1000 b、须活着）；`refreshLockState` 保留旧 BVR 锁；`canLaunchArh` 在无本地目标但有 BVR 锁时放行；`getBvrTarget` 按 UUID 解析实体。 |
+| `client/BvrState.java` | 缓存航迹，30 tick 未更新过期；`hasOwnMissile`/`ownMissile` 用于发射线延长。 |
+| `client/RadarHudClientTicker.java` | BVR 锁定获取/维护（`bvrAcquiring` 20 tick）、Alt+F 无本地回波时的回退、发射线 UUID 延长、导弹在飞判定合并 BVR 航迹。 |
+| `client/RadarHudRenderer.java` | 面板空心符号（玩家=菱形、AI=圆圈、导弹=小方框，琥珀色，超量程钳边+顶部刻度）+ 主屏三角标记（超 `effectiveRange` 的空中目标）+ `TRK BVR`/`ACQ BVR` 模式字样。 |
+| `missile/MissileArrow.java` | 数据链支持 BVR：`datalinkValid` 在 `state.targetId()<0 且 bvrTargetUuid==target` 时有效（ARH 专用）；`updateDatalinkTarget` 按 UUID 切目标；数据链测量噪声沿用。 |
+| `command/SensorDebugCommand.java` | `/minethunder test bvr start|clear`：600 格（钳制已加载区块）带标签的 BVR-TEST-7 幻影，缓慢接近玩家。 |
+
+## 流程
+
+### 航迹显示
+1. 服务端每 2 tick 对每个开雷达的玩家过滤并发送 `BvrSyncPacket`。
+2. 客户端 `BvrState` 缓存；面板/主屏绘制时对没有本地回波（`RadarHud.echoes` 命中）的航迹绘制空心琥珀色符号；被本地回波覆盖的目标不重复绘制。
+3. 航迹位置用 `lagCompensatedPosition`（服务端 2 tick 延迟 + 客户端 tick 外推）。
+
+### BVR 远程锁定（ARH 专用）
+1. **Alt+F**：本地无有效回波（或 TWS 航迹无效）时回退到 BVR：从 `BvrState.active()` 里取 >512 b、≤1000 b 的 AIR 航迹，优先扫描中心 ±60° 且更近者，进入 `bvrAcquiring` 20 tick。
+2. 建立 `RadarHud.bvrLockedUuid` 后**立即发 `BvrLockPacket(uuid)`**；服务端校验（AIR、16..1000 b、同维度、无本地锁冲突）后写入 `ServerRadarState`。`bvrAcquiring` 时面板模式字样为 `ACQ BVR`，成功为 `TRK BVR`（琥珀→白，主屏绘制角框）。
+3. 本地硬锁/TWS 建立时静默放弃 BVR 锁；航迹过期>30 tick 失锁，客户端解锁并发解除包。Alt+F 再按解除。
+4. 被锁目标的 RWR 显示 `T`（跟踪）威胁。
+
+### ARH 发射 & 数据链
+1. 发射门限与 TWS 一致：导引头开机 ≥10 tick（无本地回波时无法用对准环）。
+2. `MissileFirePacket` 携带 `bvrTargetUuid`；服务端跳过本地回波“扫描命中”校验（BVR 目标本无本地回波），其余射程/离轴角/遮挡照常。
+3. 导弹出膛即有目标实体（服务端按 UUID 解析）；中段按 `datalinkValid` 维持数据链（ARH only；SARH 不允许 BVR）。
+4. 目标丢失（死亡/尾流失效）后按 IOG 惯性飞行、ARH 末段 `seekerActivationRange` 自主搜索。
+
+### 引导线延长
+- `RadarHud.guidanceMissileUuid` 在发射时记录（本地无实体时取 BVR 自机导弹航迹）。
+- 导弹超出客户端实体范围后用 BVR 航迹（ownerUuid==自己）更新引导线起点 az/dist；目标端用 BVR 锁定航迹。
+- `missileInFlight = 本地实体在飞 || BvrState.hasOwnMissile(自己)`，命中/自爆后两端航迹同时消失。
+
+## 测试
+
+```
+/minethunder test bvr start   # 前方 ~600 格生成 BVR-TEST-7（区块保活）
+/minethunder test bvr clear
+```
+
+1. 切 ARH、开雷达、开导引头；Alt+F 锁定远端目标（状态字 TRK BVR）。
+2. 主屏出现琥珀菱形+距离；面板出现空心符号。
+3. 发射 ARH：引导线沿导弹航迹扩展，Pitbull 后正常打靶。
+4. 对方（被锁玩家）RWR 出现 `T`。

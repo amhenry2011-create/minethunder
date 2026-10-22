@@ -99,9 +99,9 @@ public final class FullFeatureTest {
                     "预期：测试弹不造成伤害；制导、失锁、近炸按规则工作。"
             },
             {
-                    "已生成雷达/红外来袭弹和箔条/热焰/ECM 假目标。",
-                    "操作：观察导弹是否转向假目标；另可用 test cm chaff/flare/ecm/all 补充。",
-                    "预期：箔条/ECM 欺骗雷达弹，热焰弹欺骗红外弹；假目标约 5 秒消失。"
+                    "已生成雷达/红外来袭弹和箔条/热焰假目标。",
+                    "操作：观察导弹是否转向假目标；另可用 test cm chaff/flare/all 补充。",
+                    "预期：箔条欺骗雷达弹，热焰弹欺骗红外弹；假目标约 5 秒消失。"
             },
             {
                     "操作：方向键偏移扫描中心后按右 Shift；H 帮助；Alt+E 干扰；Ctrl+Alt 发射；Alt+X 导引头。",
@@ -200,8 +200,7 @@ public final class FullFeatureTest {
         if (kind == null) {
             spawnCountermeasures(player, Countermeasure.CHAFF, 3);
             spawnCountermeasures(player, Countermeasure.FLARE, 3);
-            spawnCountermeasures(player, Countermeasure.ECM, 3);
-            source.sendSuccess(() -> Component.literal("已释放 3 箔条 / 3 热焰弹 / 3 ECM。"), false);
+            source.sendSuccess(() -> Component.literal("已释放 3 箔条 / 3 热焰弹。"), false);
         } else {
             spawnCountermeasures(player, kind, 3);
             source.sendSuccess(() -> Component.literal(
@@ -215,7 +214,7 @@ public final class FullFeatureTest {
         if (player == null) return 0;
         giveKit(player);
         source.sendSuccess(() -> Component.literal(
-                "测试包已发放：弓、三种导弹烟花、雪球、火焰弹、火药。"), false);
+                "测试包已发放：弓、三种导弹烟花、雪球、火焰弹。"), false);
         return 1;
     }
 
@@ -247,7 +246,6 @@ public final class FullFeatureTest {
                 spawnIncoming(player, MissileSpec.Guidance.IR, 18.0);
                 spawnCountermeasures(player, Countermeasure.CHAFF, 3);
                 spawnCountermeasures(player, Countermeasure.FLARE, 3);
-                spawnCountermeasures(player, Countermeasure.ECM, 3);
                 source.sendSuccess(() -> Component.literal("干扰测试场景已生成。"), false);
             }
             case 7 -> {
@@ -412,10 +410,12 @@ public final class FullFeatureTest {
 
     private static boolean spawnTargetMissile(ServerPlayer player) {
         ServerLevel level = player.serverLevel();
+        Vec3 forward = horizontalLook(player);
         Vec3 pos = player.getEyePosition()
-                .add(horizontalLook(player).scale(40.0)).add(0, 3, 0);
+                .add(forward.scale(40.0)).add(0, 3, 0);
+        // 给测试弹一个缓慢的前向初速，避免静止目标在阻力段悬停。
         MissileArrow missile = SensorDebugCommand.createMissile(
-                level, MissileSpecs.ARH, pos, Vec3.ZERO, null);
+                level, MissileSpecs.ARH, pos, forward.scale(0.3), null);
         if (missile == null) return false;
         missile.addTag(testTag(player));
         return true;
@@ -445,8 +445,7 @@ public final class FullFeatureTest {
 
     private static void spawnCountermeasures(ServerPlayer player, Countermeasure kind, int count) {
         ServerLevel level = player.serverLevel();
-        Item item = kind == Countermeasure.FLARE ? Items.FIRE_CHARGE
-                : kind == Countermeasure.ECM ? Items.GUNPOWDER : Items.SNOWBALL;
+        Item item = kind == Countermeasure.FLARE ? Items.FIRE_CHARGE : Items.SNOWBALL;
         for (int i = 0; i < count; i++) {
             CountermeasureEntity entity = new CountermeasureEntity(
                     Registration.COUNTERMEASURE.get(), level);
@@ -480,7 +479,6 @@ public final class FullFeatureTest {
         give(player, Registration.ARH_MISSILE_FIREWORK.get(), 16);
         give(player, Items.SNOWBALL, 16);
         give(player, Items.FIRE_CHARGE, 16);
-        give(player, Items.GUNPOWDER, 16);
     }
 
     private static void give(ServerPlayer player, Item item, int count) {
