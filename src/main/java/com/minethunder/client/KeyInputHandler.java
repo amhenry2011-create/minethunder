@@ -43,7 +43,6 @@ public final class KeyInputHandler {
     private static boolean altDWasDown = false;
     private static boolean altWWasDown = false;
     private static boolean altEWasDown = false;
-    private static boolean altVWasDown = false;
     private static double scanVelocityAz = 0.0;
     private static double scanVelocityEl = 0.0;
     private static final double SCAN_SLEW_DEG_PER_SEC = 30.0;
@@ -259,7 +258,7 @@ public final class KeyInputHandler {
 
     private static void showHelp(Minecraft mc) {
         notifyClient(mc, Component.literal(
-                "Alt+B 模式 · Alt+R 雷达 · Alt+V 回中 · 方向键扫描 · Alt+F 锁定 · Alt+T 选目标 · X 解锁"));
+                "Alt+B 模式 · Alt+R 雷达 · 右Shift 回中 · 方向键扫描 · Alt+F 锁定 · Alt+T 选目标 · X 解锁"));
         notifyClient(mc, Component.literal(
                 "Alt+Q 距离 · Alt+D 扫描宽 · Alt+W ACM · Alt+X 雷达导引头 · 满弓红外 · Alt+E 干扰弹 · C 弹种 · Enter 挂架"));
     }
@@ -304,7 +303,6 @@ public final class KeyInputHandler {
 
         boolean bDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_B);
         boolean rDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_R);
-        boolean vDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_V);
         boolean qDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_Q);
         boolean dDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_D);
         boolean wDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_W);
@@ -313,16 +311,6 @@ public final class KeyInputHandler {
         if (altDown && mc.screen == null) {
             if (bDown && !altBWasDown) cycleMode(mc);
             if (rDown && !altRWasDown) toggleRadar(mc);
-            if (vDown && !altVWasDown) {
-                if (RadarHud.lockAcquiring) {
-                    notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，扫描位置已冻结"));
-                } else {
-                    RadarHudClientTicker.recenterScan();
-                    scanVelocityAz = 0.0;
-                    scanVelocityEl = 0.0;
-                    notifyClient(mc, Component.literal("天线回中"));
-                }
-            }
             if (qDown && !altQWasDown) {
                 drain(mc.options.keyDrop);
                 cycleRange(mc);
@@ -336,9 +324,18 @@ public final class KeyInputHandler {
             }
             if (eDown && !altEWasDown) dispenseCountermeasures(mc);
         }
+        if (mc.screen == null && KeyBindings.RECENTER.consumeClick()) {
+            if (RadarHud.lockAcquiring) {
+                notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，扫描位置已冻结"));
+            } else {
+                RadarHudClientTicker.recenterScan();
+                scanVelocityAz = 0.0;
+                scanVelocityEl = 0.0;
+                notifyClient(mc, Component.literal("天线回中"));
+            }
+        }
         altBWasDown = bDown;
         altRWasDown = rDown;
-        altVWasDown = vDown;
         altQWasDown = qDown;
         altDWasDown = dDown;
         altWWasDown = wDown;

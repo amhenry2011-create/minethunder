@@ -33,7 +33,7 @@ public final class SensorDebugRenderer {
     private static final int CYAN = 0xFF66FFFF;
     private static final int BLUE = 0xFF6699FF;
 
-    public static void render(GuiGraphics g, int screenW, int screenH) {
+    public static void render(GuiGraphics g, int screenW, int screenH, float partialTick) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
 
@@ -77,16 +77,17 @@ public final class SensorDebugRenderer {
     }
 
     /** 所有雷达模式共用的四棱锥波束；填充面为淡绿色半透明。 */
-    private static void drawRadarBeams(GuiGraphics g, Minecraft mc, int screenW, int screenH) {
+    private static void drawRadarBeams(GuiGraphics g, Minecraft mc, int screenW, int screenH,
+                                       float partialTick) {
         if (mc.player == null) return;
         Player player = mc.player;
-        Vec3 look = player.getViewVector(1.0F).normalize();
+        Vec3 look = ClientRenderMath.look(player, partialTick).normalize();
         Vec3 worldUp = new Vec3(0, 1, 0);
         Vec3 right = look.cross(worldUp);
         if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
         right = right.normalize();
         Vec3 up = right.cross(look).normalize();
-        Vec3 origin = player.getEyePosition().add(look.scale(0.65));
+        Vec3 origin = ClientRenderMath.eye(player, partialTick).add(look.scale(0.65));
         Vec3[] near = corners(origin, right, up, 0.24);
 
         RadarMode mode = RadarHud.currentMode;
@@ -97,38 +98,44 @@ public final class SensorDebugRenderer {
         if (tracking) {
             Entity target = RadarHud.lockedEntity;
             if (target != null && target.isAlive()) {
-                drawBeamToTarget(g, player, near, target, screenW, screenH, 0x32A8FFB0, 0xFF9FFF9F);
+                drawBeamToTarget(g, player, near, target, screenW, screenH, partialTick,
+                        0x32A8FFB0, 0xFF9FFF9F);
             }
             return;
         }
 
         if (useSearch) {
-            double yaw = player.getYRot() + RadarHud.sweepAzimuthDeg;
-            double pitch = player.getXRot() - RadarHud.sweepElevationDeg;
+            double yaw = ClientRenderMath.yaw(player, partialTick)
+                    + ClientRenderMath.sweepAzimuth(partialTick);
+            double pitch = ClientRenderMath.pitch(player, partialTick)
+                    - ClientRenderMath.sweepElevation(partialTick);
             Vec3 dir = Vec3.directionFromRotation((float) pitch, (float) yaw).normalize();
             double range = Math.max(1.0, Math.min(RadarHud.effectiveRange(), 220.0));
             Vec3 farCenter = origin.add(dir.scale(range));
             double half = Math.max(0.45, Math.min(5.0, range * 0.012));
-            float[] farScreen = RadarHudRenderer.worldToScreen(farCenter, player, screenW, screenH);
+            float[] farScreen = RadarHudRenderer.worldToScreen(
+                    farCenter, player, screenW, screenH, partialTick);
             boolean visible = farScreen != null
                     && farScreen[0] >= 0 && farScreen[0] <= screenW
                     && farScreen[1] >= 0 && farScreen[1] <= screenH;
             if (!visible || !drawBeamToPoint(g, player, near, farCenter, dir, half,
-                    screenW, screenH, 0x4066FF66, 0xB066FF66)) {
-                drawScanEdgeMarker(g, screenW, screenH, RadarHud.sweepAzimuthDeg);
+                    screenW, screenH, partialTick, 0x4066FF66, 0xB066FF66)) {
+                drawScanEdgeMarker(g, screenW, screenH,
+                        ClientRenderMath.sweepAzimuth(partialTick));
             }
         }
 
-        drawContactBeams(g, mc, player, near, screenW, screenH, mode);
+        drawContactBeams(g, mc, player, near, screenW, screenH, mode, partialTick);
 
         if (acq && RadarHud.lockedEntity != null && RadarHud.lockedEntity.isAlive()) {
             drawBeamToTarget(g, player, near, RadarHud.lockedEntity, screenW, screenH,
-                    0x3448FF88, 0xFF9FFF9F);
+                    partialTick, 0x3448FF88, 0xFF9FFF9F);
         }
     }
 
     private static void drawContactBeams(GuiGraphics g, Minecraft mc, Player player, Vec3[] near,
-                                         int screenW, int screenH, RadarMode mode) {
+                                         int screenW, int screenH, RadarMode mode,
+                                         float partialTick) {
         if (mc.level == null || mc.player == null) return;
         int tick = mc.player.tickCount;
         int count = 0;
@@ -140,7 +147,7 @@ public final class SensorDebugRenderer {
             var targetClass = RadarCore.classify(target);
             if (targetClass == null || !mode.accepts(targetClass)) continue;
             boolean selected = echo.entityId == RadarHud.selectedEchoId;
-            drawBeamToTarget(g, player, near, target, screenW, screenH,
+            drawBeamToTarget(g, player, near, target, screenW, screenH, partialTick,
                     selected ? 0x7048FF88 : 0x4048FF88,
                     selected ? 0xFFFFD070 : 0xB07CFF9E);
             count++;
@@ -171,16 +178,18 @@ public final class SensorDebugRenderer {
 
     private static boolean drawBeamToTarget(GuiGraphics g, Player player, Vec3[] near,
                                             Entity target, int screenW, int screenH,
-                                            int fill, int edge) {
-        Vec3 center = target.getBoundingBox().getCenter();
-        Vec3 dir = center.subtract(player.getEyePosition()).normalize();
+                                            float partialTick, int fill, int edge) {
+        Vec3 center = ClientRenderMath.entityCenter(target, partialTick);
+        Vec3 dir = center.subtract(ClientRenderMath.eye(player, partialTick)).normalize();
         double half = Math.max(0.5, Math.max(target.getBbWidth(), target.getBbHeight()) * 0.5);
-        return drawBeamToPoint(g, player, near, center, dir, half, screenW, screenH, fill, edge);
+        return drawBeamToPoint(g, player, near, center, dir, half, screenW, screenH,
+                partialTick, fill, edge);
     }
 
     private static boolean drawBeamToPoint(GuiGraphics g, Player player, Vec3[] near,
                                            Vec3 farCenter, Vec3 dir, double farHalf,
-                                           int screenW, int screenH, int fill, int edge) {
+                                           int screenW, int screenH, float partialTick,
+                                           int fill, int edge) {
         Vec3 worldUp = new Vec3(0, 1, 0);
         Vec3 right = dir.cross(worldUp);
         if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
@@ -188,8 +197,8 @@ public final class SensorDebugRenderer {
         Vec3 up = right.cross(dir).normalize();
         Vec3[] far = corners(farCenter, right, up, farHalf);
 
-        float[][] n = projectAll(player, near, screenW, screenH);
-        float[][] f = projectAll(player, far, screenW, screenH);
+        float[][] n = projectAll(player, near, screenW, screenH, partialTick);
+        float[][] f = projectAll(player, far, screenW, screenH, partialTick);
         if (n == null || f == null) return false;
 
         // 四个侧面 + 远端面，使用半透明填充。
@@ -209,10 +218,12 @@ public final class SensorDebugRenderer {
     }
 
     @Nullable
-    private static float[][] projectAll(Player player, Vec3[] points, int screenW, int screenH) {
+    private static float[][] projectAll(Player player, Vec3[] points, int screenW, int screenH,
+                                        float partialTick) {
         float[][] out = new float[points.length][];
         for (int i = 0; i < points.length; i++) {
-            out[i] = RadarHudRenderer.worldToScreen(points[i], player, screenW, screenH);
+            out[i] = RadarHudRenderer.worldToScreen(
+                    points[i], player, screenW, screenH, partialTick);
             if (out[i] == null) return null;
         }
         return out;

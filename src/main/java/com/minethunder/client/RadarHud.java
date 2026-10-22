@@ -109,7 +109,7 @@ public final class RadarHud {
         }
         return isAcmContext() ? acmRange : maxRange;
     }
-    /** 扫描中心偏移：方向键平滑调整，Alt+V 复位；俯仰最大 ±60° */
+    /** 扫描中心偏移：方向键平滑调整，右 Shift 复位；俯仰最大 ±60° */
     public static double scanAzimuthOffsetDeg = 0;
     public static double scanElevationOffsetDeg = 0;
     /** 当前面板选中的回波实体 ID（只影响面板） */
@@ -192,6 +192,9 @@ public final class RadarHud {
     /** 当前扫描线在画面/面板上的方位和俯仰（度） */
     public static float sweepAzimuthDeg = 0f;
     public static float sweepElevationDeg = 0f;
+    /** 上一 tick 的扫描线，用于渲染插值。 */
+    public static float prevSweepAzimuthDeg = 0f;
+    public static float prevSweepElevationDeg = 0f;
     public static int scanStartTick = -1;
     /** 当前扫描线命中的目标缓存（UUID -> tick） */
     public static final Map<UUID, Integer> contactPaintTicks = new HashMap<>();

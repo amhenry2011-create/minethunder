@@ -15,9 +15,9 @@ import com.minethunder.MineThunder;
  * 键位绑定：还原战雷现代空战的默认快捷键，且注册进 MC 设置（选项 → 按键绑定）可自行修改。
  *
  * 战雷默认键（键盘默认，用户可在 MC 设置中改绑）：
- * - Alt 组合：Alt+B 模式、Alt+R 雷达、Alt+V 回中、Alt+Q 距离、Alt+D 扫描宽度、Alt+W ACM
+ * - Alt 组合：Alt+B 模式、Alt+R 雷达、Alt+Q 距离、Alt+D 扫描宽度、Alt+W ACM
  * - 组合键：Alt+F 锁定、Alt+T 选目标、Alt+X 导引头、Alt+E 干扰弹
- * - 单键：X 解锁、方向键扫描、H 帮助、Enter 挂架
+ * - 单键：X 解锁、方向键扫描、右 Shift 回中、H 帮助、Enter 挂架
  * - 切换导弹类型：C（额外保留）
  */
 @EventBusSubscriber(modid = MineThunder.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
@@ -34,9 +34,15 @@ public final class KeyBindings {
     public static final KeyMapping RACK_SELECT = new KeyMapping(
             "key.minethunder.rack_select_enter", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_ENTER, CATEGORY);
 
+    /** 雷达扫描中心回中（默认右 Shift）。 */
+    public static final KeyMapping RECENTER = new KeyMapping(
+            "key.minethunder.recenter", InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_RIGHT_SHIFT, CATEGORY);
+
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CYCLE_MISSILE_TYPE);
         event.register(RACK_SELECT);
+        event.register(RECENTER);
     }
 }

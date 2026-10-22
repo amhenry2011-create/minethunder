@@ -12,6 +12,9 @@
 - STT 跳过通用搜索扫描，直接连续跟踪锁定目标；ACM 保留每 tick 全 ACM 框自动截获。
 - 锁定候选/尝试时限改为一个扫描周期 + 20 tick，适配 4 行约 84 tick 的扫描周期。
 - 客户端窄波束使用 `RadarCore.scanBeam` 的保守 AABB；服务端发射校验和 RWR 仍使用全扇区 `RadarCore.scan`。
+- 雷达归中改为单独右 Shift（`KeyBindings.RECENTER`），旧 `Alt+V` 已移除；HUD/帮助/语言文件同步。
+- 传感器视觉的 3D/2D 波束渲染加入 partial tick 和扫描线插值，修复移动/转视角时抽搐。
+- 新增 `/minethunder test full start|next|stop|status`、`targets`、`dodge`、`cm`、`kit` 和 `rwr all`；测试场地临时方块在 stop 时恢复。
 
 ## 下次先读
 

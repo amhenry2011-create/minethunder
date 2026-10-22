@@ -728,7 +728,7 @@ public final class RadarHudRenderer {
 
     private static void renderHint(GuiGraphics g, int screenW, int screenH) {
         Minecraft mc = Minecraft.getInstance();
-        String hint = "Alt+B 模式  Alt+R 雷达  Alt+V 回中  方向键扫描  Alt+F 锁定  Alt+T 目标  Alt+X 导引头  Alt+E 干扰";
+        String hint = "Alt+B 模式  Alt+R 雷达  右Shift 回中  方向键扫描  Alt+F 锁定  Alt+T 目标  Alt+X 导引头  Alt+E 干扰";
         g.drawString(mc.font, hint, 8, screenH - 12, 0x8066FF66, false);
     }
 
@@ -1031,7 +1031,7 @@ public final class RadarHudRenderer {
         g.drawString(mc.font, title, w / 2 - mc.font.width(title) / 2, 12, GREEN, false);
         String[][] rows = {
                 {"B", "雷达模式"}, {"R", "雷达开关"}, {"Q", "距离档位"}, {"D", "扫描宽度"},
-                {"W", "ACM"}, {"V", "扫描复位"}, {"Alt+F", "锁定/解锁"}, {"Alt+T", "选目标"},
+                {"W", "ACM"}, {"右Shift", "扫描复位"}, {"Alt+F", "锁定/解锁"}, {"Alt+T", "选目标"},
                 {"X", "解除锁定"}, {"Alt+X", "导引头"}, {"Alt+E", "箔条+热焰"}, {"I", "红外模式"},
                 {"Enter", "挂架选择"}, {"H", "帮助"}, {"方向键", "扫描方位/俯仰"}, {"Ctrl+Alt", "发射提示"}
         };
@@ -1224,13 +1224,19 @@ public final class RadarHudRenderer {
 
     /** 世界坐标 → 屏幕坐标（近似，基于垂直 FOV） */
     public static float[] worldToScreen(Vec3 targetPos, Player player, int screenW, int screenH) {
+        return worldToScreen(targetPos, player, screenW, screenH, 1.0F);
+    }
+
+    /** 带渲染帧插值的世界坐标 → 屏幕坐标。 */
+    public static float[] worldToScreen(Vec3 targetPos, Player player,
+                                        int screenW, int screenH, float partialTick) {
         if (player == null) return null;
-        Vec3 eye = player.getEyePosition();
+        Vec3 eye = ClientRenderMath.eye(player, partialTick);
         Vec3 to = targetPos.subtract(eye);
         if (to.lengthSqr() < 1.0) return null;
         Vec3 dir = to.normalize();
 
-        Vec3 look = player.getViewVector(1.0F).normalize();
+        Vec3 look = ClientRenderMath.look(player, partialTick).normalize();
         Vec3 worldUp = new Vec3(0, 1, 0);
         Vec3 right = look.cross(worldUp);
         if (right.lengthSqr() < 1e-6) right = new Vec3(1, 0, 0);

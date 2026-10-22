@@ -55,6 +55,6 @@ public final class ClientHudEvents {
         Minecraft mc = Minecraft.getInstance();
         int w = mc.getWindow().getGuiScaledWidth();
         int h = mc.getWindow().getGuiScaledHeight();
-        SensorDebugRenderer.render(g, w, h);
+        SensorDebugRenderer.render(g, w, h, delta.getGameTimeDeltaPartialTick(true));
     }
 }

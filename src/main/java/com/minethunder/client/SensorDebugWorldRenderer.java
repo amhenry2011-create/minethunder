@@ -48,7 +48,8 @@ public final class SensorDebugWorldRenderer {
         Player player = mc.player;
         if (player == null || mc.level == null) return;
 
-        List<Beam> beams = collectBeams(player);
+        float partialTick = event.getPartialTick().getGameTimeDeltaPartialTick(true);
+        List<Beam> beams = collectBeams(player, partialTick);
         if (beams.isEmpty()) return;
 
         Vec3 camera = event.getCamera().getPosition();
@@ -72,45 +73,47 @@ public final class SensorDebugWorldRenderer {
         pose.popPose();
     }
 
-    private static List<Beam> collectBeams(Player player) {
+    private static List<Beam> collectBeams(Player player, float partialTick) {
         List<Beam> beams = new ArrayList<>();
-        Vec3 eye = player.getEyePosition();
+        Vec3 eye = ClientRenderMath.eye(player, partialTick);
         if (RadarHud.currentMode == RadarMode.STT) {
             Entity target = RadarHud.lockedEntity;
             if (target != null && target.isAlive()) {
-                addTargetBeam(beams, eye, target, LOCK_FILL, LOCK_EDGE);
+                addTargetBeam(beams, eye, target, partialTick, LOCK_FILL, LOCK_EDGE);
             }
             return beams;
         }
 
         if (RadarHud.lockAcquiring && RadarHud.lockedEntity != null
                 && RadarHud.lockedEntity.isAlive()) {
-            addTargetBeam(beams, eye, RadarHud.lockedEntity,
+            addTargetBeam(beams, eye, RadarHud.lockedEntity, partialTick,
                     LOCK_FILL, LOCK_EDGE);
             return beams;
         }
 
         if (RadarHud.currentMode == RadarMode.TWS) {
-            addScanBeam(beams, player, eye, SCAN_FILL, SCAN_EDGE);
+            addScanBeam(beams, player, eye, partialTick, SCAN_FILL, SCAN_EDGE);
             for (TwsTrack track : TwsTrackManager.tracks()) {
                 Entity target = TwsTrackManager.entity(track.entityId);
                 if (target == null || !target.isAlive()) continue;
                 boolean selected = track.entityId == RadarHud.selectedEchoId;
-                addTargetBeam(beams, eye, target,
+                addTargetBeam(beams, eye, target, partialTick,
                         selected ? SELECTED_FILL : TRACK_FILL,
                         selected ? SELECTED_EDGE : TRACK_EDGE);
             }
             return beams;
         }
 
-        addScanBeam(beams, player, eye, SCAN_FILL, SCAN_EDGE);
+        addScanBeam(beams, player, eye, partialTick, SCAN_FILL, SCAN_EDGE);
         return beams;
     }
 
     private static void addScanBeam(List<Beam> beams, Player player, Vec3 eye,
-                                    int fill, int edge) {
-        double yaw = player.getYRot() + RadarHud.sweepAzimuthDeg;
-        double pitch = player.getXRot() - RadarHud.sweepElevationDeg;
+                                    float partialTick, int fill, int edge) {
+        double yaw = ClientRenderMath.yaw(player, partialTick)
+                + ClientRenderMath.sweepAzimuth(partialTick);
+        double pitch = ClientRenderMath.pitch(player, partialTick)
+                - ClientRenderMath.sweepElevation(partialTick);
         Vec3 dir = Vec3.directionFromRotation((float) pitch, (float) yaw).normalize();
         double range = Math.max(1.0, Math.min(RadarHud.effectiveRange(), SCAN_RANGE_CAP));
         Vec3 near = eye.add(dir.scale(NEAR_DISTANCE));
@@ -120,8 +123,8 @@ public final class SensorDebugWorldRenderer {
     }
 
     private static void addTargetBeam(List<Beam> beams, Vec3 eye, Entity target,
-                                      int fill, int edge) {
-        Vec3 far = target.getBoundingBox().getCenter();
+                                      float partialTick, int fill, int edge) {
+        Vec3 far = ClientRenderMath.entityCenter(target, partialTick);
         Vec3 to = far.subtract(eye);
         if (to.lengthSqr() < 0.01) return;
         Vec3 dir = to.normalize();

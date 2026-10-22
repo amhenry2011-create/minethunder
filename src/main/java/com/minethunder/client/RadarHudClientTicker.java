@@ -1155,6 +1155,8 @@ public final class RadarHudClientTicker {
             RadarHud.scanStartTick = -1;
             scanRow = -1;
             lastSweepRow = -1;
+            RadarHud.prevSweepAzimuthDeg = RadarHud.sweepAzimuthDeg;
+            RadarHud.prevSweepElevationDeg = RadarHud.sweepElevationDeg;
             return;
         }
         if (RadarHud.scanStartTick < 0) {
@@ -1174,6 +1176,8 @@ public final class RadarHudClientTicker {
         lastSweepAzimuth = RadarHud.sweepAzimuthDeg;
         lastSweepRow = scanRow;
         scanRow = row;
+        RadarHud.prevSweepAzimuthDeg = RadarHud.sweepAzimuthDeg;
+        RadarHud.prevSweepElevationDeg = RadarHud.sweepElevationDeg;
         RadarHud.sweepAzimuthDeg = (float) (RadarHud.scanAzimuthOffsetDeg
                 + (forward ? -half + 2 * half * frac : half - 2 * half * frac));
         double elevationHalf = RadarHud.effectiveScanElevationHalfDeg();

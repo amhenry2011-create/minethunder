@@ -69,6 +69,8 @@
 4. 用 `Alt+F` 硬锁定当前目标；停止扫描更新后 9 秒内应丢失。
 5. 弓内装 IR 导弹并拉满，确认红外导引头自动开启。
 6. 按 `Alt+X` 确认雷达导引头状态反馈。
+7. 运行 `/minethunder test full start`，按聊天栏阶段和 `[下一阶段]` 做全功能验收；`stop` 清理测试场地。
+8. 单独运行 `/minethunder test targets`、`dodge`、`cm`、`kit`、`rwr all` 做专项复测。
 
 ## 关键文件
 - `client/RadarEcho.java`

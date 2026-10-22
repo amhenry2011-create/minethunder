@@ -56,6 +56,49 @@ public final class SensorDebugCommand {
                                 .then(Commands.literal("ir")
                                         .executes(context -> spawnIncoming(context.getSource(),
                                                 MissileSpec.Guidance.IR))))
+                        .then(Commands.literal("full")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> FullFeatureTest.start(context.getSource()))
+                                .then(Commands.literal("start")
+                                        .executes(context -> FullFeatureTest.start(context.getSource())))
+                                .then(Commands.literal("next")
+                                        .executes(context -> FullFeatureTest.next(context.getSource())))
+                                .then(Commands.literal("stop")
+                                        .executes(context -> FullFeatureTest.stop(context.getSource())))
+                                .then(Commands.literal("status")
+                                        .executes(context -> FullFeatureTest.status(context.getSource()))))
+                        .then(Commands.literal("targets")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> FullFeatureTest.targets(context.getSource())))
+                        .then(Commands.literal("dodge")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> FullFeatureTest.dodge(context.getSource(), null))
+                                .then(Commands.literal("arh")
+                                        .executes(context -> FullFeatureTest.dodge(context.getSource(),
+                                                MissileSpec.Guidance.ARH)))
+                                .then(Commands.literal("sarh")
+                                        .executes(context -> FullFeatureTest.dodge(context.getSource(),
+                                                MissileSpec.Guidance.SARH)))
+                                .then(Commands.literal("ir")
+                                        .executes(context -> FullFeatureTest.dodge(context.getSource(),
+                                                MissileSpec.Guidance.IR))))
+                        .then(Commands.literal("cm")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> FullFeatureTest.countermeasures(context.getSource(), null))
+                                .then(Commands.literal("chaff")
+                                        .executes(context -> FullFeatureTest.countermeasures(context.getSource(),
+                                                com.minethunder.countermeasure.Countermeasure.CHAFF)))
+                                .then(Commands.literal("flare")
+                                        .executes(context -> FullFeatureTest.countermeasures(context.getSource(),
+                                                com.minethunder.countermeasure.Countermeasure.FLARE)))
+                                .then(Commands.literal("ecm")
+                                        .executes(context -> FullFeatureTest.countermeasures(context.getSource(),
+                                                com.minethunder.countermeasure.Countermeasure.ECM)))
+                                .then(Commands.literal("all")
+                                        .executes(context -> FullFeatureTest.countermeasures(context.getSource(), null))))
+                        .then(Commands.literal("kit")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> FullFeatureTest.kit(context.getSource())))
                         .then(Commands.literal("rwr")
                                 .then(Commands.literal("search")
                                         .executes(context -> setRwrTest(context.getSource(), RwrThreat.SEARCH)))
@@ -69,6 +112,8 @@ public final class SensorDebugCommand {
                                         .executes(context -> setTwoMissileRwrTest(context.getSource())))
                                 .then(Commands.literal("sweep")
                                         .executes(context -> setSweepRwrTest(context.getSource())))
+                                .then(Commands.literal("all")
+                                        .executes(context -> FullFeatureTest.rwrAll(context.getSource())))
                                 .then(Commands.literal("launch")
                                         .executes(context -> setRwrTest(context.getSource(), RwrThreat.MISSILE)))
                                 .then(Commands.literal("blind")
@@ -227,7 +272,7 @@ public final class SensorDebugCommand {
     }
 
     @Nullable
-    private static MissileArrow createMissile(ServerLevel level, MissileSpec spec, Vec3 pos,
+    static MissileArrow createMissile(ServerLevel level, MissileSpec spec, Vec3 pos,
                                               Vec3 motion, @Nullable net.minecraft.world.entity.Entity target) {
         MissileArrow missile;
         if (spec.guidance == MissileSpec.Guidance.SARH) {

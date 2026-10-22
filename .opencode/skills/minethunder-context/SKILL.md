@@ -47,7 +47,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 - Loader migrated to NeoForge 21.1.x; see `MIGRATION_NEOFORGE.md`.
 - Radar modes: SRC, SRC PD, TWS, GMI, SEA, ACM, STT. MTI removed. Air modes accept AIR only; GMI accepts GROUND+SEA moving; SEA accepts SEA ships only. See `RADAR_MODES.md`.
 - Firework crossbow canceled. Three missile fireworks are inventory ammo; `Ctrl+Alt` fires directly from inventory (no arm step). Auto ammo priority: manual → ARH → SARH → IR. Recipes exist for IR/SARH/ARH. Guided firework rendering remains.
-- Radar ranges 40/100/300/600/1000 b, default 300; scan patterns 40x20/120x10/120x20, default 120x20; 240x10 removed.
+- Radar ranges 40/100/300/600/1000 b, default 300; scan patterns 40x20/120x10/120x20, default 120x20; 240x10 removed. Recenter is standalone Right Shift. Full test commands live under `/minethunder test full`.
 - Target selection is panel-only: Alt+T changes panel selection, no lock/screen action; Alt+F starts TRK PD. TRK PD is single-target only.
 - IR lock is implemented: the small ring acquires for 1 second, then follows the target inside the 6x visual outer ring; the outer ring is authoritative at about 73.9° effective off-boresight.
 - Radar panel selected target has horizontal + two vertical lines. Long screen vertical line removed. TWS scan center follows selected target.
