@@ -23,6 +23,9 @@ public final class ServerRadarState {
     /** BVR 远程锁定最大距离（格）。 */
     public static final double BVR_LOCK_RANGE = 1000.0;
 
+    /** BVR 远程锁定最小距离（格），与服务端 validateBvrTarget 一致。 */
+    public static final double BVR_LOCK_MIN_RANGE = 16.0;
+
     /**
      * 设置/解除 BVR 远程目标。来自 BvrLockPacket；实体必须已加载且为 AIR 类。
      */

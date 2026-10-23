@@ -18,8 +18,8 @@
 | `network/BvrSyncPacket.java` | 服务端→客户端全量航迹：UUID、kind、ownerUuid、name、pos、vel、entityId。 |
 | `network/BvrLockPacket.java` | 客户端→服务端：设置/解除 BVR 远程软锁（UUID）。 |
 | `radar/ServerRadarState.java` | `LockState` 增加 `bvrTargetUuid`；`validateBvrTarget`（同维度、AIR、16..1000 b、须活着）；`refreshLockState` 保留旧 BVR 锁；`canLaunchArh` 在无本地目标但有 BVR 锁时放行；`getBvrTarget` 按 UUID 解析实体。 |
-| `client/BvrState.java` | 缓存航迹，30 tick 未更新过期；`hasOwnMissile`/`ownMissile` 用于发射线延长。 |
-| `client/RadarHudClientTicker.java` | BVR 锁定获取/维护（`bvrAcquiring` 20 tick）、Alt+F 无本地回波时的回退、发射线 UUID 延长、导弹在飞判定合并 BVR 航迹。 |
+| `client/BvrState.java` | 缓存航迹，30 tick 未更新过期；`hasOwnMissile`/`ownMissile` 用于发射线延长；`Paint` 涂抹记忆（波束扫过才建立/刷新、180 tick 过期，同本地回波），未扫到的航迹面板不显示也不更新。 |
+| `client/RadarHudClientTicker.java` | BVR 锁定获取/维护（`bvrAcquiring` 20 tick）、Alt+F 无本地回波时的回退、发射线 UUID 延长、导弹在飞判定合并 BVR 航迹；`updateBvrPaints` 用与本地扫描相同的波束窗口判定 BVR 航迹是否被扫过。 |
 | `client/RadarHudRenderer.java` | 无专属 BVR 视觉：面板航迹按普通目标样式绘制（同 mode 的横线/图标符号，本地回波优先，锁定=常规锁定样式；TWS 面板同款圆点）；主屏远程锁定画普通绿色锁定框+数据。`ACQ BVR`/`TRK BVR` 模式字样删除，复用 `ACQ PD`/`TRK PD`。 |
 | `missile/MissileArrow.java` | 数据链支持 BVR：`datalinkValid` 在 `state.targetId()<0 且 bvrTargetUuid==target` 时有效（ARH 专用）；`updateDatalinkTarget` 按 UUID 切目标；数据链测量噪声沿用。 |
 | `command/SensorDebugCommand.java` | `/minethunder test bvr start|clear`：600 格（钳制已加载区块）带标签的 BVR-TEST-7 幻影，缓慢接近玩家。 |
@@ -28,14 +28,16 @@
 
 ### 航迹显示
 1. 服务端每 2 tick 对每个开雷达的玩家过滤并发送 `BvrSyncPacket`。
-2. 客户端 `BvrState` 缓存；面板按普通目标样式绘制没有本地回波（`RadarHud.echoes` 命中）的航迹，颜色/符号与本地目标一致，被本地回波覆盖的不重画。不显示超当前量程的目标（量程档 600/1000 覆盖）。
-3. 航迹位置用 `lagCompensatedPosition`（服务端 2 tick 延迟 + 客户端 tick 外推）。
+2. 客户端 `BvrState` 缓存；**显示与普通雷达同规**：只有扫描波束实际扫过航迹的方位/仰角时才建立/刷新涂抹快照（与本地回波同一窗口判定、180 tick 记忆），未扫到时面板位置冻结、超期消失；已锁定的 BVR 目标例外，保持 TRK 连续实时更新。
+3. 面板按普通目标样式绘制没有本地回波（`RadarHud.echoes` 命中）的航迹，颜色/符号与本地目标一致，被本地回波覆盖的不重画。不显示超当前量程的目标（量程档 600/1000 覆盖）。
+4. 航迹位置用 `lagCompensatedPosition`（服务端 2 tick 延迟 + 客户端 tick 外推）在涂抹时刻取快照。
 
 ### BVR 远程锁定（ARH 专用）
-1. **Alt+F**：本地无有效回波（或 TWS 航迹无效）时回退到 BVR：从 `BvrState.active()` 里取 >512 b、≤1000 b 的 AIR 航迹，优先扫描中心 ±60° 且更近者，进入 `bvrAcquiring` 20 tick。
-2. 建立 `RadarHud.bvrLockedUuid` 后**立即发 `BvrLockPacket(uuid)`**；服务端校验（AIR、16..1000 b、同维度、无本地锁冲突）后写入 `ServerRadarState`。模式字样复用 `ACQ PD`/`TRK PD`。
-3. 本地硬锁/TWS 建立时静默放弃 BVR 锁；航迹过期>30 tick 失锁，客户端解锁并发解除包。Alt+F 再按解除。
-4. 被锁目标的 RWR 显示 `T`（跟踪）威胁。
+1. **Alt+F**：本地无有效回波（或 TWS 航迹无效）时回退到 BVR：只能选**已被波束涂抹过**的 AIR 航迹，**16..1000 b**（与服务端校验一致），优先扫描中心 ±60° 且更近者，进入 `bvrAcquiring` 20 tick。
+2. 仅 ARH 弹种可发起；弹种不符时提示「远程锁定仅 ARH：请切换弹种」，不会再静默失败。
+3. 建立 `RadarHud.bvrLockedUuid` 后**立即发 `BvrLockPacket(uuid)`**；服务端校验（AIR、16..1000 b、同维度、无本地锁冲突）后写入 `ServerRadarState`。模式字样复用 `ACQ PD`/`TRK PD`。
+4. 本地硬锁/TWS 建立时静默放弃 BVR 锁；航迹过期>30 tick 失锁，客户端解锁并发解除包。Alt+F 再按解除。
+5. 被锁目标的 RWR 显示 `T`（跟踪）威胁。
 
 ### ARH 发射 & 数据链
 1. 发射门限与 TWS 一致：导引头开机 ≥10 tick（无本地回波时无法用对准环）。

@@ -250,12 +250,24 @@ public final class RadarHudRenderer {
                 case SURFACE -> RadarTargetClass.SEA;
             };
             if (!RadarHud.currentMode.accepts(bvrClass)) continue;
-            Vec3 predicted = BvrState.lagCompensatedPosition(track);
-            double dist = bvrEye.distanceTo(predicted);
-            if (dist > range || dist < 0.1) continue;
             boolean isLockedBvr = RadarHud.bvrLockedUuid != null
                     && RadarHud.bvrLockedUuid.equals(track.uuid());
             if (RadarHud.currentMode == RadarMode.STT && !isLockedBvr) continue;
+            // 波束涂抹记忆：只有被扫描波束实际扫过的航迹才显示；
+            // 已锁定的 BVR 目标除外（同 TRK PD 连续跟踪，保持实时位置）。
+            BvrState.Paint paint = BvrState.painted(track.uuid());
+            Vec3 predicted;
+            Vec3 velocity;
+            if (isLockedBvr) {
+                predicted = BvrState.lagCompensatedPosition(track);
+                velocity = track.velocity();
+            } else {
+                if (paint == null) continue;
+                predicted = paint.position();
+                velocity = paint.velocity();
+            }
+            double dist = bvrEye.distanceTo(predicted);
+            if (dist > range || dist < 0.1) continue;
             Vec3 toBvr = predicted.subtract(bvrEye);
             double az = Math.toDegrees(Math.atan2(toBvr.dot(bvrRight), toBvr.dot(bvrLook)));
             int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2));
@@ -274,7 +286,7 @@ public final class RadarHudRenderer {
                 };
                 int color = alphaColor(isLockedBvr ? WHITE : GREEN, isLockedBvr ? 1f : 0.8f);
                 drawContactIcon(g, bx, by, icon, color);
-                drawMotionVector(g, mc, track.velocity(), predicted, bx, by,
+                drawMotionVector(g, mc, velocity, predicted, bx, by,
                         Math.max(6, (int) Math.round(size * 0.03)), color);
             } else {
                 int shortLen = Math.max(6, (int) Math.round(size * 0.028));
@@ -328,7 +340,20 @@ public final class RadarHudRenderer {
             if (track.kind() != BvrKind.PLAYER && track.kind() != BvrKind.AI) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
             if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
-            Vec3 predicted = BvrState.lagCompensatedPosition(track);
+            // 波束涂抹记忆：只显示被扫描波束扫过的航迹；锁定目标保持实时位置。
+            boolean lockedBvr = RadarHud.bvrLockedUuid != null
+                    && RadarHud.bvrLockedUuid.equals(track.uuid());
+            BvrState.Paint paint = BvrState.painted(track.uuid());
+            Vec3 predicted;
+            Vec3 velocity;
+            if (lockedBvr) {
+                predicted = BvrState.lagCompensatedPosition(track);
+                velocity = track.velocity();
+            } else {
+                if (paint == null) continue;
+                predicted = paint.position();
+                velocity = paint.velocity();
+            }
             double dist = bvrEye.distanceTo(predicted);
             if (dist > range || dist < 0.1) continue;
             Vec3 toBvr = predicted.subtract(bvrEye);
@@ -337,11 +362,9 @@ public final class RadarHudRenderer {
             int by = py + size - (int) (dist / range * size);
             if (bx < px + 2 || bx >= px + size - 2 || by < py + 12
                     || by >= py + size - 2) continue;
-            boolean lockedBvr = RadarHud.bvrLockedUuid != null
-                    && RadarHud.bvrLockedUuid.equals(track.uuid());
             int color = alphaColor(lockedBvr ? WHITE : GREEN, lockedBvr ? 1f : 0.7f);
             drawFilledCircle(g, bx, by, lockedBvr ? 3 : 2, color);
-            drawHeadingLine(g, mc, track.velocity(), bx, by, color);
+            drawHeadingLine(g, mc, velocity, bx, by, color);
         }
     }
 
@@ -1372,12 +1395,11 @@ public final class RadarHudRenderer {
             int x1 = cx + halfWpx;
             int lineTop = Math.max(0, top);
             int lineBot = Math.min(h, bot);
+            // 只保留上下四个方角端帽，不再画贯穿屏幕的长竖线。
             if (lineBot > lineTop) {
-                g.fill(x0, lineTop, x0 + 1, lineBot, col);
-                g.fill(x1 - 1, lineTop, x1, lineBot, col);
+                drawRotatedBracket(g, x0, x1, lineTop, Math.max(8, Math.round(10 * ui)), true, col);
+                drawRotatedBracket(g, x0, x1, lineBot, Math.max(8, Math.round(10 * ui)), false, col);
             }
-            drawRotatedBracket(g, x0, x1, top, Math.max(8, Math.round(10 * ui)), true, col);
-            drawRotatedBracket(g, x0, x1, bot, Math.max(8, Math.round(10 * ui)), false, col);
             int hy = Math.max(0, Math.min(h - 1, elToScreenY(RadarHud.sweepElevationDeg, w, h)));
             g.fill(cx - beamLen, hy, cx + beamLen, hy + 1, col);
             g.drawString(mc.font, label, Math.max(4, x0),
@@ -1393,22 +1415,9 @@ public final class RadarHudRenderer {
         drawCornerBoxRect(g, cx, cy, hw, hh,
                 Math.max(6, Math.round(8 * ui)), GREEN, pulse);
         if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_RASTER) {
-            int dim = ((int) (pulse * 150) << 24) | (GREEN & 0x00FFFFFF);
-            int gx1 = azToScreenX(-RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
-            int gx2 = azToScreenX(RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
-            int gy1 = elToScreenY(RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
-            int gy2 = elToScreenY(-RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
-            g.fill(gx1, cy - hh, gx1 + 1, cy + hh, dim);
-            g.fill(gx2, cy - hh, gx2 + 1, cy + hh, dim);
-            g.fill(cx - hw, gy1, cx + hw, gy1 + 1, dim);
-            g.fill(cx - hw, gy2, cx + hw, gy2 + 1, dim);
-        }
-        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_RASTER) {
             int bx = Math.max(0, Math.min(w - 1, azToScreenX(RadarHud.sweepAzimuthDeg, w, h)));
             int by = Math.max(0, Math.min(h - 1, elToScreenY(RadarHud.sweepElevationDeg, w, h)));
             g.fill(bx - beamLen, by, bx + beamLen, by + 1, col);
-        } else {
-            g.fill(cx - beamLen, cy, cx + beamLen, cy + 1, col);
         }
         g.drawString(mc.font, label, cx - hw, Math.max(4, cy - hh - 14), GREEN, false);
     }

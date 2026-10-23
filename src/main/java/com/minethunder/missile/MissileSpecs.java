@@ -68,8 +68,8 @@ public final class MissileSpecs {
     public static final MissileSpec IR = new MissileSpec(
             MissileSpec.Guidance.IR, "IR",
             4.0,
-            110.0,      // WT R-73 后半球锁定 11 km（按 10 b/km）
-            34.0,       // WT R-73 全向锁定 3.4 km（按 10 b/km）
+            160.0,      // 后半球锁定距离 16 b（基线 11 b，按需求加远）
+            50.0,       // 全向锁定距离 5 b（基线 3.4 b，按需求加远）
             8.0,        // fov 8°（小圆环）
             30.0,       // lockAngleMax 30°（大圆环）
             35.0,       // angleMax 35°

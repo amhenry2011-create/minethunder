@@ -23,6 +23,40 @@ public final class BvrState {
 
     private static final Map<UUID, Entry> TRACKS = new HashMap<>();
 
+    /**
+     * 波束涂抹记忆：只有扫描波束实际扫过的航迹才会建立/刷新快照，
+     * 面板绘制使用快照中的冻结位置，与本地回波保持同一套规则。
+     */
+    public record Paint(Vec3 position, Vec3 velocity, int lastPaintTick) {}
+
+    private static final Map<UUID, Paint> PAINTS = new HashMap<>();
+
+    private static int nowTick() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.player == null ? 0 : mc.player.tickCount;
+    }
+
+    /** 记录一次波束涂抹（位置/速度取涂抹时刻快照）。 */
+    public static void paint(UUID uuid, Paint paint) {
+        PAINTS.put(uuid, paint);
+    }
+
+    /** 涂抹快照；超过回波记忆未再次命中即过期（与本地回波 180 tick 一致）。 */
+    @Nullable
+    public static Paint painted(UUID uuid) {
+        Paint paint = PAINTS.get(uuid);
+        if (paint == null) return null;
+        if (nowTick() - paint.lastPaintTick() > RadarHud.CONTACT_MEMORY_TICKS) {
+            PAINTS.remove(uuid);
+            return null;
+        }
+        return paint;
+    }
+
+    public static void clearPaints() {
+        PAINTS.clear();
+    }
+
     public static void setTracks(List<BvrTrack> tracks) {
         Minecraft mc = Minecraft.getInstance();
         int tick = mc.player == null ? 0 : mc.player.tickCount;

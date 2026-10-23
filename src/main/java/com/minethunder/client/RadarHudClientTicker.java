@@ -160,7 +160,7 @@ public final class RadarHudClientTicker {
             RadarHud.bvrAcquiring = false;
             RadarHud.bvrLockedUuid = null;
             RadarHud.bvrLockedName = "";
-            RadarHud.lockProgress = 0f;
+            BvrState.clearPaints();
             RadarHud.seekerModel.reset();
             RadarHud.seekerInertial = false;
             RadarHud.guidanceLineActive = false;
@@ -250,6 +250,7 @@ public final class RadarHudClientTicker {
                 }
             }
         }
+        updateBvrPaints(mc, player, origin, nowTick);
         if (RadarHud.currentMode == RadarMode.TWS) {
             // TWS 与搜索雷达同一套逐行波束：航迹由命中回波刷新，未命中时由预测维持。
             // 清除切换模式残留的地面/海面回波，避免 TWS 面板继续显示。
@@ -937,9 +938,7 @@ public final class RadarHudClientTicker {
             }
             Entity entity = echo == null ? null : TwsTrackManager.entity(echo.entityId);
             if (entity == null || !entity.isAlive() || echo == null) {
-                if (!beginBvrLockAcquisition()) {
-                    RadarHud.lastLockMessage = "无有效回波";
-                }
+                beginBvrLockAcquisition();
                 return;
             }
             beginLockAcquisition(entity, echo.azimuthDeg, echo.range, echo.position);
@@ -961,14 +960,13 @@ public final class RadarHudClientTicker {
             if (best == null || echo.range < best.range) best = echo;
         }
         if (best == null) {
-            if (!beginBvrLockAcquisition()) {
-                RadarHud.lastLockMessage = "无有效回波";
-            }
+            beginBvrLockAcquisition();
             return;
         }
         Entity entity = TwsTrackManager.entity(best.entityId);
         if (entity == null || !entity.isAlive()) {
-            RadarHud.lastLockMessage = "无有效回波";
+            // 本地回波实体失效时继续尝试 BVR 远程锁定。
+            beginBvrLockAcquisition();
             return;
         }
         beginLockAcquisition(entity, best.azimuthDeg, best.range, best.position);
@@ -976,12 +974,16 @@ public final class RadarHudClientTicker {
 
     /**
      * 无本地回波时回退：对 BVR 远程航迹发起 ARH 数据链软锁。
-     * 仅空中目标、512 格以外（近距离依赖本地扫描）、仅 ARH 弹种。
+     * 仅空中目标、16..1000 格（与服务端校验一致）、仅 ARH 弹种；
+     * 候选必须已被扫描波束涂抹过（BvrState.painted），与普通雷达锁定同规。
      */
     private static boolean beginBvrLockAcquisition() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || !RadarHud.radarOn) return false;
-        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH) return false;
+        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH) {
+            RadarHud.lastLockMessage = "远程锁定仅 ARH：请切换弹种";
+            return false;
+        }
         Vec3 eye = mc.player.getEyePosition();
         Vec3 look = mc.player.getViewVector(1.0F).normalize();
         BvrTrack best = null;
@@ -989,9 +991,11 @@ public final class RadarHudClientTicker {
         for (BvrTrack track : BvrState.active()) {
             if (!track.kind().isAir()) continue;
             if (track.uuid().equals(mc.player.getUUID())) continue;
+            if (BvrState.painted(track.uuid()) == null) continue;
             Vec3 predicted = BvrState.lagCompensatedPosition(track);
             double distance = eye.distanceTo(predicted);
-            if (distance < 512.0 || distance > ServerRadarState.BVR_LOCK_RANGE) continue;
+            if (distance < ServerRadarState.BVR_LOCK_MIN_RANGE
+                    || distance > ServerRadarState.BVR_LOCK_RANGE) continue;
             double az = Math.toDegrees(RadarCore.azimuthBetween(look,
                     predicted.subtract(eye)));
             double azScore = Math.abs(az - RadarHud.scanAzimuthOffsetDeg);
@@ -1001,7 +1005,10 @@ public final class RadarHudClientTicker {
                 best = track;
             }
         }
-        if (best == null) return false;
+        if (best == null) {
+            RadarHud.lastLockMessage = "无具备扫描记忆的远程目标";
+            return false;
+        }
         RadarHud.bvrAcquiring = true;
         RadarHud.bvrAcquireTicks = 0;
         RadarHud.bvrLockedUuid = best.uuid();
@@ -1397,6 +1404,56 @@ public final class RadarHudClientTicker {
         RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
                 + elevationHalf
                 - (row + 0.5) * elevationSpan / rows);
+    }
+
+    /**
+     * BVR 远程航迹按普通雷达规则显示：只有当前扫描波束实际扫过其方位/仰角时
+     * 建立/刷新涂抹快照；未扫到时面板保持冻结位置，超过回波记忆后消失。
+     * 已锁定的 BVR 目标与本机导弹数据链例外，保持连续更新（同 TRK PD 规则）。
+     */
+    private static void updateBvrPaints(Minecraft mc, Player player,
+                                        Vec3 origin, int nowTick) {
+        if (RadarHud.currentMode == RadarMode.STT) return;
+        ScanWindow window;
+        Vec3 beamDir;
+        if (RadarHud.currentMode == RadarMode.ACM
+                && RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_FIXED) {
+            // 正前静止与本地 ACM 全框扫描一致：整框 ±3° 内直接涂抹。
+            window = new ScanWindow(RadarHud.scanAzimuthOffsetDeg,
+                    RadarHud.scanElevationOffsetDeg,
+                    RadarHud.ACM_FIXED_HALF_DEG, RadarHud.ACM_FIXED_HALF_DEG);
+            beamDir = scanDirection(player);
+        } else if (RadarHud.currentMode == RadarMode.ACM) {
+            window = acmScanWindow();
+            beamDir = Vec3.directionFromRotation(
+                    player.getXRot() - (float) window.elCenterDeg(),
+                    player.getYRot() + (float) window.azCenterDeg()).normalize();
+        } else {
+            window = currentScanWindow();
+            beamDir = Vec3.directionFromRotation(
+                    player.getXRot() - (float) window.elCenterDeg(),
+                    player.getYRot() + (float) window.azCenterDeg()).normalize();
+        }
+        double azHalf = Math.toRadians(window.azHalfDeg());
+        double elHalf = Math.toRadians(window.elHalfDeg());
+        double range = RadarHud.effectiveRange();
+        for (BvrTrack track : BvrState.active()) {
+            if (player.getUUID().equals(track.uuid())) continue;
+            RadarTargetClass cls = switch (track.kind()) {
+                case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+                case SURFACE -> RadarTargetClass.SEA;
+            };
+            if (!RadarHud.currentMode.accepts(cls)) continue;
+            Vec3 pos = BvrState.lagCompensatedPosition(track);
+            Vec3 to = pos.subtract(origin);
+            double distance = to.length();
+            if (distance <= 0.1 || distance > range) continue;
+            if (Math.abs(RadarCore.azimuthBetween(beamDir, to)) > azHalf
+                    || Math.abs(RadarCore.elevationBetween(beamDir, to)) > elHalf) {
+                continue;
+            }
+            BvrState.paint(track.uuid(), new BvrState.Paint(pos, track.velocity(), nowTick));
+        }
     }
 
     /**
