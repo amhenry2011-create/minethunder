@@ -54,7 +54,7 @@ public class ArhMissileArrow extends MissileArrow {
             searchCooldown--;
             return current;
         }
-        searchCooldown = 10;
+        searchCooldown = 3;
 
         Entity acquired = findRadarTarget();
         if (acquired != null) {
@@ -79,7 +79,7 @@ public class ArhMissileArrow extends MissileArrow {
         forward = forward.normalize();
 
         double angle = Math.toDegrees(Math.acos(clamp(forward.dot(to.normalize()), -1.0, 1.0)));
-        return angle <= spec.seekerFovDeg;
+        return angle <= spec.angleMaxDeg;
     }
 
     @Nullable
@@ -107,7 +107,7 @@ public class ArhMissileArrow extends MissileArrow {
 
             double angle = Math.toDegrees(Math.acos(
                     clamp(forward.dot(to.normalize()), -1.0, 1.0)));
-            if (angle > spec.seekerFovDeg) continue;
+            if (angle > spec.angleMaxDeg) continue;
             Vec3 center = candidate.getBoundingBox().getCenter();
             if (RadarCore.isOccluded(level(), pos, center)) continue;
 

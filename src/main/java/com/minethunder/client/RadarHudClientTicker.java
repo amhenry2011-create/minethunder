@@ -7,7 +7,6 @@ import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.network.Network;
-import com.minethunder.network.BvrLockPacket;
 import com.minethunder.network.RadarSyncPacket;
 import com.minethunder.network.RwrPaintPacket;
 import com.minethunder.radar.BvrTrack;
@@ -16,6 +15,7 @@ import com.minethunder.radar.RadarMode;
 import com.minethunder.radar.RadarTargetClass;
 import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.ServerRadarState;
+import com.minethunder.radar.TargetSource;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
@@ -67,6 +67,7 @@ public final class RadarHudClientTicker {
     private static boolean lastSentRadarOn = true;
     private static float lastSentTrackQuality = 1f;
     private static java.util.UUID lastSentBvrUuid = null;
+    private static int lastSentSource = -1;
     private static RadarMode lastMode = RadarMode.SRC_PD;
     /** 当前扫描行与上一 tick 的扫描位置，用于构造本 tick 扫过段。 */
     private static int scanRow = -1;
@@ -95,8 +96,9 @@ public final class RadarHudClientTicker {
 
         if (lastMode != RadarHud.currentMode) {
             boolean keepLockedTarget = RadarHud.currentMode == RadarMode.STT
-                    && RadarHud.locked && RadarHud.lockedEntity != null;
-            if (RadarHud.lockedEntity != null && !keepLockedTarget) {
+                    && RadarHud.locked && RadarHud.lockedEntity != null
+                    && RadarHud.lockedTargetSource == TargetSource.LOCAL;
+            if (RadarHud.lockedTargetUuid != null && !keepLockedTarget) {
                 clearLockForModeChange();
             }
             clearRadarPanelForModeChange(keepLockedTarget);
@@ -157,9 +159,9 @@ public final class RadarHudClientTicker {
             RadarHud.echoes.clear();
             RadarHud.lockedEntity = null;
             RadarHud.locked = false;
-            RadarHud.bvrAcquiring = false;
-            RadarHud.bvrLockedUuid = null;
-            RadarHud.bvrLockedName = "";
+            RadarHud.lockAcquiring = false;
+            RadarHud.lockedTargetUuid = null;
+            RadarHud.lockedTargetSource = null;
             BvrState.clearPaints();
             RadarHud.seekerModel.reset();
             RadarHud.seekerInertial = false;
@@ -175,13 +177,12 @@ public final class RadarHudClientTicker {
         // 雷达扫描：搜索模式只探测当前扫描行扫过的窄波束；ACM 保留连续全框截获。
         Vec3 origin = player.getEyePosition();
         int nowTick = player.tickCount;
-        boolean sttLocked = RadarHud.currentMode == RadarMode.STT
-                && RadarHud.locked && RadarHud.lockedEntity != null;
+        boolean trackingView = RadarHud.isTrackingView();
         List<RadarContact> rawContacts;
         double contactOffsetAz;
         double contactOffsetEl;
-        if (sttLocked) {
-            // TRK PD 只跟踪锁定目标，不再跑通用扇区扫描。
+        if (trackingView) {
+            // TRK PD 只跟踪锁定目标（本地或 BVR），不再跑通用扇区扫描。
             rawContacts = List.of();
             contactOffsetAz = 0.0;
             contactOffsetEl = 0.0;
@@ -259,6 +260,7 @@ public final class RadarHudClientTicker {
             TwsTrackManager.update(nowTick);
             TwsTrack current = TwsTrackManager.selected();
             if (current != null) {
+                RadarHud.selectedTargetUuid = current.uuid;
                 RadarHud.selectedEchoId = current.entityId;
                 RadarHud.selectionInitialized = true;
             }
@@ -266,24 +268,26 @@ public final class RadarHudClientTicker {
         } else {
             TwsTrackManager.clear();
         }
-        validatePanelSelection();
-        if (RadarHud.currentMode == RadarMode.STT) {
+        TargetRegistry.validateSelection(player, nowTick);
+        if (RadarHud.isTrackingView()) {
             // TRK 只管当前锁定目标：清掉通用扫描产生的其它/地面回波。
             RadarHud.contacts.clear();
             RadarHud.contactPaintTicks.clear();
-            Entity lock = RadarHud.lockedEntity;
-            RadarHud.echoes.entrySet().removeIf(e -> lock == null
-                    || !RadarHud.locked
-                    || e.getValue().entityId != lock.getId());
+            if (RadarHud.lockedTargetSource == TargetSource.LOCAL
+                    && RadarHud.lockedEntity != null) {
+                int lockId = RadarHud.lockedEntity.getId();
+                RadarHud.echoes.entrySet().removeIf(e -> e.getValue().entityId != lockId);
+            } else {
+                RadarHud.echoes.clear();
+            }
         }
-        if (RadarHud.currentMode == RadarMode.STT && RadarHud.locked
-                && !RadarHud.lockAcquiring) {
+        if (RadarHud.isTrackingView() && !RadarHud.lockAcquiring) {
             followLockedTarget(player, nowTick);
         }
 
         // ACM 格斗模式：自动截获机头前方最近目标；解锁后短暂冷却，避免瞬间复锁。
         if (RadarHud.acmActive && RadarHud.currentMode == RadarMode.ACM
-                && RadarHud.lockedEntity == null && RadarHud.acmCooldownTicks <= 0) {
+                && !RadarHud.hasActiveLockTarget() && RadarHud.acmCooldownTicks <= 0) {
             RadarContact best = null;
             double bestDist = Double.MAX_VALUE;
             for (RadarContact c : contacts) {
@@ -305,25 +309,17 @@ public final class RadarHudClientTicker {
             }
         }
 
-        // 手动锁定建立阶段
+        // 手动锁定建立阶段：本地/BVR 共用同一 ACQ 流程。
         if (RadarHud.lockAcquiring) {
             updateLockAcquisition(player, nowTick);
         }
 
-        // BVR 远程锁定：建立/维护数据链软锁；本地硬锁优先。
-        if (RadarHud.bvrAcquiring) {
-            tickBvrAcquisition(player, nowTick);
-        } else if (RadarHud.bvrLockedUuid != null) {
-            maintainBvrLock(player, nowTick);
+        // TRK PD 是连续跟踪模式：本地/BVR 共用同一连续跟踪流程。
+        if (RadarHud.isTrackingView() && !RadarHud.lockAcquiring) {
+            updateContinuousTrack(player, nowTick);
         }
 
-        // TRK PD 是连续跟踪模式：直接读目标实时状态，不依赖扫描线命中。
-        Entity locked = RadarHud.lockedEntity;
-        if (locked != null && RadarHud.locked && !RadarHud.lockAcquiring) {
-            updateContinuousTrack(player, locked, nowTick);
-        }
-
-        if (RadarHud.lockedEntity == null && !RadarHud.missileInFlight) {
+        if (!RadarHud.hasActiveLockTarget() && !RadarHud.missileInFlight) {
             RadarHud.seekerInertial = false;
         }
 
@@ -336,18 +332,24 @@ public final class RadarHudClientTicker {
 
     /** 锁定目标/导引头状态变化时同步给服务端，供发射校验使用。 */
     private static void syncRadarState(Minecraft mc) {
-        if (mc.getConnection() == null) return;
+        if (mc.getConnection() == null || mc.player == null) return;
+        Player player = mc.player;
+        int tick = player.tickCount;
         // RWR/雷达状态与当前选择的弹种无关；IR 模式下仍要同步雷达跟踪/锁定。
-        boolean hardLock = RadarHud.locked && RadarHud.lockedEntity != null;
+        TrackedTarget lockTarget = RadarHud.lockedTargetUuid == null ? null
+                : TargetRegistry.find(RadarHud.lockedTargetUuid, player, tick);
+        boolean localHardLock = RadarHud.locked && lockTarget != null
+                && lockTarget.source == TargetSource.LOCAL && lockTarget.entity != null;
         Entity target = null;
-        if (hardLock) {
-            target = RadarHud.lockedEntity;
+        if (localHardLock) {
+            target = lockTarget.entity;
         } else if (RadarHud.currentMode == RadarMode.TWS) {
             TwsTrack track = TwsTrackManager.selected();
             if (track != null) target = TwsTrackManager.entity(track.entityId);
         }
+        boolean bvrLock = RadarHud.isBvrLock() && RadarHud.lockedTargetUuid != null;
         int targetId = target == null ? -1 : target.getId();
-        int state = hardLock && RadarHud.seekerEnabled
+        int state = RadarHud.seekerEnabled && RadarHud.hasActiveLockTarget()
                 ? RadarHud.seekerModel.state().ordinal() : -1;
         int mode = RadarHud.currentMode.ordinal();
         float quality = 0f;
@@ -355,30 +357,34 @@ public final class RadarHudClientTicker {
             RadarEcho echo = RadarHud.echoes.get(target.getUUID());
             quality = echo == null ? 0.3f
                     : (float) Math.max(0.15, 1.0 - echo.notchSeverity * 0.65);
-            if (hardLock) quality *= Math.max(0.15f, RadarHud.lockAlpha);
+            if (localHardLock) quality *= Math.max(0.15f, RadarHud.lockAlpha);
             quality = Math.max(0.05f, Math.min(1.0f, quality));
+        } else if (bvrLock) {
+            quality = 0.6f;
         }
+        java.util.UUID sentUuid = bvrLock ? RadarHud.lockedTargetUuid
+                : (target == null ? null : target.getUUID());
+        int sentSource = bvrLock ? TargetSource.BVR.ordinal()
+                : TargetSource.LOCAL.ordinal();
         boolean changed = targetId != lastSentTargetId || state != lastSentSeekerState
-                || mode != lastSentMode || hardLock != lastSentHardLock
+                || mode != lastSentMode || localHardLock != lastSentHardLock
                 || RadarHud.radarOn != lastSentRadarOn
-                || Math.abs(quality - lastSentTrackQuality) > 0.02f;
-        boolean refresh = mc.player != null && mc.player.tickCount - lastSentTick >= 20;
-        java.util.UUID bvr = RadarHud.bvrLockedUuid;
-        boolean bvrChanged = !java.util.Objects.equals(bvr, lastSentBvrUuid);
-        if (changed || refresh || bvrChanged) {
-            Network.sendToServer(new RadarSyncPacket(targetId, state, mode, hardLock,
-                    RadarHud.radarOn, quality));
-            if (bvrChanged) {
-                Network.sendToServer(new BvrLockPacket(bvr));
-                lastSentBvrUuid = bvr;
-            }
+                || Math.abs(quality - lastSentTrackQuality) > 0.02f
+                || !java.util.Objects.equals(sentUuid, lastSentBvrUuid)
+                || sentSource != lastSentSource;
+        boolean refresh = tick - lastSentTick >= 20;
+        if (changed || refresh) {
+            Network.sendToServer(new RadarSyncPacket(targetId, state, mode, localHardLock,
+                    RadarHud.radarOn, quality, sentUuid, sentSource));
             lastSentTargetId = targetId;
             lastSentSeekerState = state;
             lastSentMode = mode;
-            lastSentHardLock = hardLock;
+            lastSentHardLock = localHardLock;
             lastSentRadarOn = RadarHud.radarOn;
             lastSentTrackQuality = quality;
-            lastSentTick = mc.player == null ? 0 : mc.player.tickCount;
+            lastSentBvrUuid = sentUuid;
+            lastSentSource = sentSource;
+            lastSentTick = tick;
         }
     }
 
@@ -403,16 +409,17 @@ public final class RadarHudClientTicker {
             return;
         }
 
-        // 硬锁定 / TWS 软跟踪（本地实体）优先，BVR 远程 TRK 无本地实体，用数据链位置。
-        Entity entityTarget = RadarHud.locked ? RadarHud.lockedEntity : null;
+        // 统一目标：硬锁定可以是本地实体或 BVR 数据链；TWS 软跟踪仍走本地实体。
+        TrackedTarget lockTarget = RadarHud.lockedTargetUuid == null ? null
+                : TargetRegistry.find(RadarHud.lockedTargetUuid, player, player.tickCount);
+        Entity entityTarget = lockTarget != null && lockTarget.entity != null
+                ? lockTarget.entity : null;
         TwsTrack twsTrack = entityTarget == null && RadarHud.currentMode == RadarMode.TWS
                 ? TwsTrackManager.selected() : null;
         if (entityTarget == null && twsTrack != null) {
             entityTarget = TwsTrackManager.entity(twsTrack.entityId);
             if (entityTarget != null && !entityTarget.isAlive()) entityTarget = null;
         }
-        BvrTrack bvrTrack = entityTarget == null && RadarHud.bvrLockedUuid != null
-                ? BvrState.get(RadarHud.bvrLockedUuid) : null;
 
         int sourceId;
         Vec3 targetPos;
@@ -422,11 +429,10 @@ public final class RadarHudClientTicker {
             targetPos = entityTarget.getBoundingBox().getCenter();
             closure = RadarHud.locked ? RadarHud.lockedClosure
                     : (twsTrack == null ? 0.0 : twsTrack.closure);
-        } else if (bvrTrack != null
-                && !mc.player.getUUID().equals(bvrTrack.uuid())) {
-            sourceId = -(int) Math.abs((long) bvrTrack.uuid().hashCode());
-            targetPos = BvrState.lagCompensatedPosition(bvrTrack);
-            closure = RadarHud.bvrLockedClosure;
+        } else if (lockTarget != null && !lockTarget.isOwnedBy(player)) {
+            sourceId = -(int) Math.abs((long) lockTarget.uuid.hashCode());
+            targetPos = lockTarget.livePosition();
+            closure = RadarHud.lockedClosure;
         } else {
             if (lastSeekerLockId != -1) {
                 RadarHud.seekerRing.resetToCenter(sw / 2.0, sh / 2.0);
@@ -648,25 +654,24 @@ public final class RadarHudClientTicker {
 
     /** 记录发射瞬间的引导目标与主动弹开机距离。 */
     private static void startGuidanceLine() {
-        Entity target = RadarHud.lockedEntity;
+        Player player = Minecraft.getInstance().player;
+        int tick = player == null ? 0 : player.tickCount;
+        TrackedTarget guided = player == null || RadarHud.lockedTargetUuid == null
+                ? null : TargetRegistry.find(RadarHud.lockedTargetUuid, player, tick);
+        Entity target = guided == null ? null : guided.entity;
         if (target == null && RadarHud.currentMode == RadarMode.TWS) {
             TwsTrack track = TwsTrackManager.selected();
             target = track == null ? null : TwsTrackManager.entity(track.entityId);
         }
-        RadarHud.guidanceLineActive = target != null
-                || RadarHud.bvrLockedUuid != null;
+        RadarHud.guidanceLineActive = target != null || guided != null;
         if (target != null) {
             RadarHud.guidanceTargetId = target.getId();
             RadarHud.guidanceLastWorldPosition = target.getBoundingBox().getCenter();
         } else {
             RadarHud.guidanceTargetId = -1;
-            // BVR 锁定：目标不在客户端实体范围内，端点由 BVR 航迹维护。
-            if (RadarHud.bvrLockedUuid != null) {
-                BvrTrack bvr = BvrState.get(RadarHud.bvrLockedUuid);
-                if (bvr != null) {
-                    RadarHud.guidanceLastWorldPosition =
-                            BvrState.lagCompensatedPosition(bvr);
-                }
+            // BVR 锁定：目标不在客户端实体范围内，端点由统一目标实时维护。
+            if (guided != null) {
+                RadarHud.guidanceLastWorldPosition = guided.livePosition();
             }
         }
         RadarHud.guidancePitbullRange = RadarHud.selectedSpec == null
@@ -751,10 +756,11 @@ public final class RadarHudClientTicker {
         if (target != null) {
             pos = target.getBoundingBox().getCenter();
             RadarHud.guidanceLastWorldPosition = pos;
-        } else if (RadarHud.bvrLockedUuid != null) {
-            BvrTrack bvr = BvrState.get(RadarHud.bvrLockedUuid);
-            if (bvr != null) {
-                pos = BvrState.lagCompensatedPosition(bvr);
+        } else if (RadarHud.lockedTargetUuid != null) {
+            TrackedTarget guided = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, player, player.tickCount);
+            if (guided != null) {
+                pos = guided.livePosition();
                 RadarHud.guidanceLastWorldPosition = pos;
             } else {
                 pos = RadarHud.guidanceLastWorldPosition;
@@ -774,22 +780,28 @@ public final class RadarHudClientTicker {
                 Math.atan2(to.dot(right), to.dot(look)));
     }
 
-    /** TRK PD 连续跟踪：逐 tick 从目标实体读取位置，不依赖扫描线。 */
-    private static void updateContinuousTrack(Player player, Entity target, int tick) {
+    /** TRK PD 连续跟踪：本地读实体、BVR 读数据链预测，同一套包线/拖锁规则。 */
+    private static void updateContinuousTrack(Player player, int tick) {
+        TrackedTarget tracked = TargetRegistry.find(RadarHud.lockedTargetUuid, player, tick);
+        if (tracked == null || !tracked.alive(player)) {
+            dropLock(RadarHud.isBvrLock() ? "BVR 远程失锁" : "目标拖锁");
+            return;
+        }
+        Entity target = tracked.entity;
         Vec3 eye = player.getEyePosition();
-        Vec3 targetPos = target.getBoundingBox().getCenter();
+        Vec3 targetPos = tracked.livePosition();
         Vec3 to = targetPos.subtract(eye);
         double range = to.length();
         Vec3 look = player.getViewVector(1.0F).normalize();
         double azimuth = Math.toDegrees(RadarCore.azimuthBetween(look, to));
         double elevation = Math.toDegrees(RadarCore.elevationBetween(look, to));
-        RadarTargetClass targetClass = RadarCore.classify(target);
-        boolean occluded = RadarCore.isOccludedForTarget(
-                player.level(), eye, targetPos, targetClass);
-        boolean valid = target.isAlive()
-                && targetClass != null
-                && !occluded
+        RadarTargetClass targetClass = tracked.targetClass == null
+                ? RadarCore.classify(target) : tracked.targetClass;
+        boolean occluded = target != null && targetClass != null
+                && RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass);
+        boolean valid = range > 0.1
                 && range <= RadarHud.effectiveRange()
+                && !occluded
                 && Math.abs(azimuth) <= RadarHud.effectiveScanHalfDeg()
                 && Math.abs(elevation) <= RadarHud.effectiveScanElevationHalfDeg();
 
@@ -800,22 +812,25 @@ public final class RadarHudClientTicker {
             RadarHud.lockAlpha = 1f;
             RadarHud.seekerInertial = false;
             suppressLockInertial = false;
-            updateLockInfo(player, target);
+            refreshBvrPaint(player, tracked, tick);
+            updateLockInfo(player, tracked);
 
-            Vec3 relativeVelocity = target.getDeltaMovement()
-                    .subtract(player.getDeltaMovement()).scale(20.0);
-            double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
-                    : relativeVelocity.dot(to.normalize());
-            double notchSeverity = RadarCore.notchSeverity(
-                    radialVelocity, range, RadarHud.currentMode);
-            RadarContact contact = new RadarContact(target, range, azimuth, elevation,
-                    radialVelocity, targetPos, false, notchSeverity > 0.4,
-                    notchSeverity, targetClass);
-            RadarEcho echo = RadarHud.echoes.get(target.getUUID());
-            if (echo == null) {
-                RadarHud.echoes.put(target.getUUID(), new RadarEcho(contact, tick));
-            } else {
-                echo.update(contact, tick);
+            if (target != null && targetClass != null) {
+                Vec3 relativeVelocity = target.getDeltaMovement()
+                        .subtract(player.getDeltaMovement()).scale(20.0);
+                double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
+                        : relativeVelocity.dot(to.normalize());
+                double notchSeverity = RadarCore.notchSeverity(
+                        radialVelocity, range, RadarHud.currentMode);
+                RadarContact contact = new RadarContact(target, range, azimuth, elevation,
+                        radialVelocity, targetPos, false, notchSeverity > 0.4,
+                        notchSeverity, targetClass);
+                RadarEcho echo = RadarHud.echoes.get(target.getUUID());
+                if (echo == null) {
+                    RadarHud.echoes.put(target.getUUID(), new RadarEcho(contact, tick));
+                } else {
+                    echo.update(contact, tick);
+                }
             }
             return;
         }
@@ -827,21 +842,43 @@ public final class RadarHudClientTicker {
                 Math.max(0f, 1f - RadarHud.lockLostTicks / (float) TRK_LOST_GRACE_TICKS));
         RadarHud.seekerInertial = false;
         if (RadarHud.lockLostTicks >= TRK_LOST_GRACE_TICKS) {
-            dropLock("目标拖锁");
+            dropLock(RadarHud.isBvrLock() ? "BVR 远程失锁" : "目标拖锁");
         }
     }
 
-    /** 更新锁定目标信息（名称/距离/接近速度） */
-    private static void updateLockInfo(Player player, Entity target) {
-        var targetPos = target.getBoundingBox().getCenter();
-        var eye = player.getEyePosition();
+    /**
+     * ACQ/TRK 期间持续刷新 BVR 涂抹：远程目标无法靠物理扫描刷新，
+     * 锁定时由数据链每 tick 续期，保证与本地 TRK 一样不会“忘记”目标。
+     */
+    private static void refreshBvrPaint(Player player, TrackedTarget target, int tick) {
+        if (target == null || target.bvr == null) return;
+        Vec3 eye = player.getEyePosition();
+        Vec3 targetPos = target.livePosition();
+        Vec3 to = targetPos.subtract(eye);
+        double range = to.length();
+        if (range <= 0.1) return;
+        Vec3 view = player.getViewVector(1.0F).normalize();
+        Vec3 right = view.cross(new Vec3(0, 1, 0));
+        if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
+        right = right.normalize();
+        float frozenAz = (float) (Math.toDegrees(
+                Math.atan2(to.dot(right), to.dot(view)))
+                + RadarHud.scanAzimuthOffsetDeg);
+        BvrState.paint(target.uuid, new BvrState.Paint(
+                targetPos, target.velocity(), frozenAz, range, tick));
+    }
+
+    /** 更新锁定目标信息（名称/距离/接近速度），本地/BVR 共用。 */
+    private static void updateLockInfo(Player player, TrackedTarget target) {
+        Vec3 targetPos = target.livePosition();
+        Vec3 eye = player.getEyePosition();
+        RadarHud.lockedName = target.displayName();
         RadarHud.lockedDistance = eye.distanceTo(targetPos);
-        var rel = target.getDeltaMovement().subtract(player.getDeltaMovement()).scale(20.0);
-        var dir = targetPos.subtract(eye);
-        if (dir.lengthSqr() > 1e-6) {
+        Vec3 rel = target.velocity().subtract(player.getDeltaMovement()).scale(20.0);
+        Vec3 dir = targetPos.subtract(eye);
+        if (dir.lengthSqr() > 1.0E-6) {
             RadarHud.lockedClosure = -rel.dot(dir.normalize()); // 正 = 接近
         }
-        RadarHud.lockedName = target.getName().getString();
     }
 
     /** 进入 ACM：清空旧锁定/TWS，记住返回模式。 */
@@ -854,11 +891,7 @@ public final class RadarHudClientTicker {
         }
         clearLockState();
         TwsTrackManager.clear();
-        // ACM 是纯视距内自动截获：断开远程数据链软锁并丢弃涂抹记忆。
-        if (RadarHud.bvrLockedUuid != null) {
-            cancelBvrLock("ACM 截断远程锁定");
-            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
-        }
+        // ACM 是纯视距内自动截获：统一锁定状态已随 clearLockState 断开。
         BvrState.clearPaints();
         RadarHud.acmReturnMode = returnMode;
         RadarHud.acmActive = true;
@@ -866,8 +899,7 @@ public final class RadarHudClientTicker {
         RadarHud.scanAzimuthOffsetDeg = 0;
         RadarHud.scanElevationOffsetDeg = 0;
         RadarHud.acmCooldownTicks = 0;
-        RadarHud.selectedEchoId = -1;
-        RadarHud.selectionInitialized = false;
+        TargetRegistry.clearSelection();
     }
 
     /** 退出 ACM（包括自动截获后已切到 TRK PD 的情况）。 */
@@ -880,8 +912,7 @@ public final class RadarHudClientTicker {
         RadarHud.acmCooldownTicks = 0;
         RadarHud.scanAzimuthOffsetDeg = 0;
         RadarHud.scanElevationOffsetDeg = 0;
-        RadarHud.selectedEchoId = -1;
-        RadarHud.selectionInitialized = false;
+        TargetRegistry.clearSelection();
     }
 
     /** Alt+W：进入/退出 ACM，返回操作后是否仍在 ACM。 */
@@ -911,205 +942,46 @@ public final class RadarHudClientTicker {
         };
     }
 
-    /** 切换锁定：开始 TRK PD 尝试锁定，或解除已有锁定。 */
+    /** 切换锁定：统一目标流程，本地/BVR 只差“是否已加载实体”。 */
     public static void toggleLock() {
         if (RadarHud.lockAcquiring) {
             cancelLockAttempt("取消尝试锁定");
-            return;
-        }
-        if (RadarHud.bvrAcquiring) {
-            cancelBvrLock("取消远程尝试锁定");
             return;
         }
         if (RadarHud.locked) {
             dropLock("解除锁定");
             return;
         }
-        if (RadarHud.bvrLockedUuid != null) {
-            cancelBvrLock("解除 BVR 远程锁定");
-            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
+        Player player = Minecraft.getInstance().player;
+        if (player == null) return;
+        if (!RadarHud.radarOn) {
+            lockMessage("雷达未开启");
             return;
         }
-
-        if (RadarHud.currentMode == RadarMode.TWS) {
-            TwsTrack track = TwsTrackManager.selected();
-            RadarEcho echo = track == null ? null : RadarHud.echoes.get(track.uuid);
-            if (echo == null && RadarHud.selectedEchoId >= 0) {
-                for (RadarEcho candidate : RadarHud.echoes.values()) {
-                    if (candidate.entityId == RadarHud.selectedEchoId) {
-                        echo = candidate;
-                        break;
-                    }
-                }
-            }
-            Entity entity = echo == null ? null : TwsTrackManager.entity(echo.entityId);
-            if (entity == null || !entity.isAlive() || echo == null) {
-                beginBvrLockAcquisition();
-                return;
-            }
-            beginLockAcquisition(entity, echo.azimuthDeg, echo.range, echo.position);
+        if (RadarHud.acmActive || RadarHud.currentMode == RadarMode.ACM) {
+            // ACM 是纯近距自动截获，不提供手动远程锁定。
+            lockMessage("无有效回波");
             return;
         }
-
-        RadarEcho best = null;
-        int now = Minecraft.getInstance().player == null
-                ? 0 : Minecraft.getInstance().player.tickCount;
-        int maxEchoAge = RadarHud.scanFrameTicks() + 20;
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.expired(now) || !echoAllowed(echo)) continue;
-            // 手动尝试锁定必须基于当前扫描周期内实际扫描到的回波，而不是旧记忆。
-            if (now - echo.lastHitTick > maxEchoAge) continue;
-            if (echo.entityId == RadarHud.selectedEchoId) {
-                best = echo;
-                break;
-            }
-            if (best == null || echo.range < best.range) best = echo;
-        }
-        if (best == null) {
-            beginBvrLockAcquisition();
+        TrackedTarget target = TargetRegistry.bestLockCandidate(player, player.tickCount);
+        if (target == null) {
+            lockMessage("无具备扫描记忆的有效目标");
             return;
         }
-        Entity entity = TwsTrackManager.entity(best.entityId);
-        if (entity == null || !entity.isAlive()) {
-            // 本地回波实体失效时继续尝试 BVR 远程锁定。
-            beginBvrLockAcquisition();
-            return;
-        }
-        beginLockAcquisition(entity, best.azimuthDeg, best.range, best.position);
+        beginLockAcquisition(target);
     }
 
     /** 写入锁定反馈并打时间戳，供消息行按新鲜度渲染。 */
-    private static void lockMessage(String text) {
+    public static void lockMessage(String text) {
         RadarHud.lastLockMessage = text;
         RadarHud.lastLockMessageAt = System.currentTimeMillis();
     }
 
-    /**
-     * 无本地回波时回退：对 BVR 远程航迹发起雷达数据链软锁。
-     * 雷达锁定属雷达功能，不区分弹种（发射时才按弹种校验）；
-     * 仅空中目标、16..1000 格（与服务端校验一致）；
-     * 候选必须已被扫描波束涂抹过（BvrState.painted），与普通雷达锁定同规。
-     */
-    private static boolean beginBvrLockAcquisition() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null) return false;
-        if (!RadarHud.radarOn) {
-            lockMessage("雷达未开启");
-            return false;
-        }
-        if (RadarHud.acmActive || RadarHud.currentMode == RadarMode.ACM) {
-            // ACM 是纯近距自动截获，不提供远程锁定。
-            lockMessage("无有效回波");
-            return false;
-        }
-        Vec3 eye = mc.player.getEyePosition();
-        Vec3 look = mc.player.getViewVector(1.0F).normalize();
-        // 与本地手动锁定同款新鲜度：只认本扫描周期内被波束扫中的涂抹。
-        int maxPaintAge = RadarHud.scanFrameTicks() + 20;
-        int now = mc.player.tickCount;
-        BvrTrack best = null;
-        BvrState.Paint bestPaint = null;
-        double bestScore = Double.MAX_VALUE;
-        for (BvrTrack track : BvrState.active()) {
-            if (!track.kind().isAir()) continue;
-            if (track.uuid().equals(mc.player.getUUID())) continue;
-            BvrState.Paint paint = BvrState.painted(track.uuid());
-            if (paint == null || now - paint.lastPaintTick() > maxPaintAge) continue;
-            Vec3 predicted = BvrState.lagCompensatedPosition(track);
-            double distance = eye.distanceTo(predicted);
-            if (distance < ServerRadarState.BVR_LOCK_MIN_RANGE
-                    || distance > ServerRadarState.BVR_LOCK_RANGE) continue;
-            double az = Math.toDegrees(RadarCore.azimuthBetween(look,
-                    predicted.subtract(eye)));
-            double azScore = Math.abs(az - RadarHud.scanAzimuthOffsetDeg);
-            double score = (azScore <= 60.0 ? azScore : 1000.0 + azScore) + distance * 0.001;
-            if (score < bestScore) {
-                bestScore = score;
-                best = track;
-                bestPaint = paint;
-            }
-        }
-        if (best == null) {
-            lockMessage("无具备扫描记忆的远程目标");
-            return false;
-        }
-        RadarHud.bvrAcquiring = true;
-        RadarHud.bvrAcquireTicks = 0;
-        RadarHud.bvrLockedUuid = best.uuid();
-        RadarHud.bvrLockedName = best.name();
-        // ACQ 阶段四角框锚定在被扫到的涂抹位置，与本地 ACQ 视觉一致。
-        RadarHud.lockAnchorPosition = bestPaint.position();
-        updateBvrInfo(mc.player, best);
-        lockMessage("ACQ PD 远程尝试锁定");
-        return true;
-    }
-
-    private static void tickBvrAcquisition(Player player, int tick) {
-        BvrTrack track = RadarHud.bvrLockedUuid == null
-                ? null : BvrState.get(RadarHud.bvrLockedUuid);
-        if (!RadarHud.radarOn || track == null || !track.kind().isAir()
-                || player.getUUID().equals(track.uuid())) {
-            cancelBvrLock("尝试锁定失败");
-            return;
-        }
-        if (RadarHud.locked || RadarHud.lockAcquiring) {
-            // 本地扫描锁定优先，静默放弃远程软锁。
-            cancelBvrLock(null);
-            return;
-        }
-        if (RadarHud.bvrAcquiring) {
-            // 与本地 ACQ 同规：尝试期间目标必须被扫描波束持续刷新。
-            BvrState.Paint paint = BvrState.painted(track.uuid());
-            int freshness = RadarHud.scanFrameTicks()
-                    + RadarHud.LOCK_ACQUIRE_TICKS + 20;
-            if (paint == null || tick - paint.lastPaintTick() > freshness) {
-                cancelBvrLock("远程尝试锁定失败");
-                return;
-            }
-        }
-        updateBvrInfo(player, track);
-        RadarHud.bvrAcquireTicks++;
-        if (RadarHud.bvrAcquireTicks >= RadarHud.LOCK_ACQUIRE_TICKS) {
-            RadarHud.bvrAcquiring = false;
-            Network.sendToServer(new BvrLockPacket(RadarHud.bvrLockedUuid));
-            lockMessage("TRK PD 远程锁定");
-        }
-    }
-
-    private static void maintainBvrLock(Player player, int tick) {
-        BvrTrack track = RadarHud.bvrLockedUuid == null
-                ? null : BvrState.get(RadarHud.bvrLockedUuid);
-        if (!RadarHud.radarOn || RadarHud.locked || RadarHud.lockAcquiring
-                || track == null || !track.kind().isAir()) {
-            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
-            cancelBvrLock("BVR 远程失锁");
-            return;
-        }
-        updateBvrInfo(player, track);
-    }
-
-    private static void updateBvrInfo(Player player, BvrTrack track) {
-        Vec3 predicted = BvrState.lagCompensatedPosition(track);
-        double distance = player.getEyePosition().distanceTo(predicted);
-        Vec3 velocity = track.velocity();
-        Vec3 to = predicted.subtract(player.getEyePosition()).normalize();
-        RadarHud.bvrLockedDistance = distance;
-        RadarHud.bvrLockedClosure = -velocity.dot(to);
-    }
-
-    private static void cancelBvrLock(@Nullable String message) {
-        RadarHud.bvrAcquiring = false;
-        RadarHud.bvrAcquireTicks = 0;
-        RadarHud.bvrLockedUuid = null;
-        RadarHud.bvrLockedName = "";
-        RadarHud.bvrLockedDistance = 0;
-        RadarHud.bvrLockedClosure = 0;
-        if (message != null) lockMessage(message);
-    }
-
-    private static void beginLockAcquisition(Entity entity, double az, double range, Vec3 anchor) {
-        if (!lockAllowed(entity)) {
-            lockMessage("地面/海面目标需在 GMI/SEA 中锁定");
+    /** 统一 ACQ：锁定状态机不区分目标来源。 */
+    private static void beginLockAcquisition(TrackedTarget target) {
+        Player player = Minecraft.getInstance().player;
+        if (player == null || !target.alive(player)) {
+            lockMessage("尝试锁定失败");
             return;
         }
         RadarHud.preLockMode = RadarHud.currentMode == RadarMode.STT
@@ -1118,51 +990,47 @@ public final class RadarHudClientTicker {
         RadarHud.preLockScanPatternIndex = RadarHud.scanPatternIndex;
         RadarHud.preLockScanAzimuthOffsetDeg = RadarHud.scanAzimuthOffsetDeg;
         RadarHud.preLockScanElevationOffsetDeg = RadarHud.scanElevationOffsetDeg;
-        RadarHud.lockAnchorPosition = anchor;
-        RadarHud.lockedEntity = entity;
+        RadarHud.lockAnchorPosition = target.scanPosition;
+        RadarHud.lockedEntity = target.entity;
+        RadarHud.lockedTargetUuid = target.uuid;
+        RadarHud.lockedTargetSource = target.source;
         RadarHud.locked = false;
         RadarHud.lockAcquiring = true;
         RadarHud.lockAcquireTicks = 0;
-        RadarHud.lockAnchorAzimuthDeg = az;
-        RadarHud.lockAnchorRange = range;
+        RadarHud.lockAnchorAzimuthDeg = target.panelAzimuthDeg();
+        RadarHud.lockAnchorRange = target.panelRange();
         RadarHud.lockProgress = 0f;
         RadarHud.lockAlpha = 1f;
         RadarHud.lockLostTicks = 0;
         RadarHud.seekerModel.reset();
         lastSeekerLockId = -1;
-        lockMessage("ACQ PD 尝试锁定");
+        updateLockInfo(player, target);
+        lockMessage(target.source == TargetSource.BVR
+                ? "ACQ PD 远程尝试锁定" : "ACQ PD 尝试锁定");
     }
 
+    /** 统一 ACQ 更新：本地校验实体/遮挡，BVR 校验数据链新鲜度，其余规则相同。 */
     private static void updateLockAcquisition(Player player, int tick) {
-        Entity target = RadarHud.lockedEntity;
-        if (target == null || !target.isAlive() || !lockAllowed(target)) {
+        TrackedTarget target = TargetRegistry.find(RadarHud.lockedTargetUuid, player, tick);
+        boolean eligible = target != null && TargetRegistry.eligibleForLock(target,
+                player, tick, TargetRegistry.lockFreshnessTicks(),
+                target.source != TargetSource.BVR);
+        if (!eligible || !target.alive(player)) {
             cancelLockAttempt("尝试锁定失败");
             return;
         }
-        RadarEcho echo = RadarHud.echoes.get(target.getUUID());
-        if (echo == null || echo.expired(tick)) {
-            cancelLockAttempt("尝试锁定失败");
-            return;
-        }
-        if (RadarHud.preLockMode != RadarMode.TWS) {
+        refreshBvrPaint(player, target, tick);
+        if (target.entity != null) {
             Vec3 eye = player.getEyePosition();
-            Vec3 targetPos = target.getBoundingBox().getCenter();
-            RadarTargetClass targetClass = RadarCore.classify(target);
-            if (eye.distanceTo(targetPos) > RadarHud.effectiveRange()
-                    || targetClass == null
+            Vec3 targetPos = target.entity.getBoundingBox().getCenter();
+            RadarTargetClass targetClass = RadarCore.classify(target.entity);
+            if (targetClass == null
                     || RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass)) {
                 cancelLockAttempt("尝试锁定失败");
                 return;
             }
         }
-        // 目标必须在上一轮扫描周期内被实际命中，并给 20 tick 锁定建立留出时间；
-        // 按波束逐行扫描后不再要求本 tick 仍在 contacts 里。TWS 使用已建立软航迹。
-        if (RadarHud.preLockMode != RadarMode.TWS
-                && tick - echo.lastHitTick
-                > RadarHud.scanFrameTicks() + RadarHud.LOCK_ACQUIRE_TICKS + 20) {
-            cancelLockAttempt("尝试锁定失败");
-            return;
-        }
+        updateLockInfo(player, target);
         RadarHud.lockAcquireTicks++;
         RadarHud.lockProgress = Math.min(1f,
                 RadarHud.lockAcquireTicks / (float) RadarHud.LOCK_ACQUIRE_TICKS);
@@ -1172,38 +1040,66 @@ public final class RadarHudClientTicker {
         }
     }
 
+    /** ACM 自动截获入口：把本地实体包装成统一目标后走同一锁定完成流程。 */
     private static void completeLock(Entity entity) {
         if (entity == null || !lockAllowed(entity)) return;
-        if (RadarHud.preLockMode == null) RadarHud.preLockMode = RadarHud.currentMode;
-        // ACM 自动截获可能尚未经过扫描线，补齐一份回波，避免下一 tick 立刻失锁。
-        RadarContact contact = findContact(entity);
-        if (contact != null) {
-            int tick = Minecraft.getInstance().player == null
-                    ? 0 : Minecraft.getInstance().player.tickCount;
-            RadarEcho echo = RadarHud.echoes.get(entity.getUUID());
-            if (echo == null) {
-                RadarHud.echoes.put(entity.getUUID(), new RadarEcho(contact, tick));
-            } else {
-                echo.update(contact, tick);
+        Player player = Minecraft.getInstance().player;
+        if (player == null) return;
+        int tick = player.tickCount;
+        RadarEcho echo = RadarHud.echoes.get(entity.getUUID());
+        if (echo == null) {
+            RadarContact contact = findContact(entity);
+            if (contact != null) {
+                echo = new RadarEcho(contact, tick);
+                RadarHud.echoes.put(entity.getUUID(), echo);
             }
         }
-        RadarHud.lockedEntity = entity;
+        if (echo == null) return;
+        completeLock(TrackedTarget.local(echo, entity));
+    }
+
+    /** 统一锁定完成：本地/BVR 唯一区别是是否带本地实体。 */
+    private static void completeLock(TrackedTarget target) {
+        Player player = Minecraft.getInstance().player;
+        if (player == null || !target.alive(player)) return;
+        if (RadarHud.preLockMode == null) RadarHud.preLockMode = RadarHud.currentMode;
+        // ACM 自动截获可能尚未经过扫描线，补齐一份回波，避免下一 tick 立刻失锁。
+        if (target.entity != null) {
+            RadarContact contact = findContact(target.entity);
+            if (contact != null) {
+                int tick = player.tickCount;
+                RadarEcho echo = RadarHud.echoes.get(target.uuid);
+                if (echo == null) {
+                    RadarHud.echoes.put(target.uuid, new RadarEcho(contact, tick));
+                } else {
+                    echo.update(contact, tick);
+                }
+            }
+        }
+        RadarHud.lockedEntity = target.entity;
+        RadarHud.lockedTargetUuid = target.uuid;
+        RadarHud.lockedTargetSource = target.source;
         RadarHud.lockAcquiring = false;
         RadarHud.locked = true;
         RadarHud.currentMode = RadarMode.STT;
+        lastMode = RadarMode.STT;
         RadarHud.lockProgress = 1f;
         RadarHud.lockAlpha = 1f;
         RadarHud.lockLostTicks = 0;
         RadarHud.seekerModel.reset();
         lastSeekerLockId = -1;
         lockTicks = LOCK_HOLD_TICKS;
-        lockMessage("TRK PD 锁定");
+        updateLockInfo(player, target);
+        lockMessage(target.source == TargetSource.BVR
+                ? "TRK PD 远程锁定" : "TRK PD 锁定");
     }
 
     private static void cancelLockAttempt(String message) {
         RadarHud.lockAcquiring = false;
         RadarHud.lockAcquireTicks = 0;
         RadarHud.lockedEntity = null;
+        RadarHud.lockedTargetUuid = null;
+        RadarHud.lockedTargetSource = null;
         RadarHud.locked = false;
         RadarHud.lockProgress = 0f;
         RadarHud.lockAlpha = 0f;
@@ -1230,13 +1126,15 @@ public final class RadarHudClientTicker {
         RadarHud.contacts.clear();
         RadarHud.contactPaintTicks.clear();
         TwsTrackManager.clear();
-        if (keepLockedTarget) {
+        if (keepLockedTarget && RadarHud.lockedEntity != null) {
             int keepId = RadarHud.lockedEntity.getId();
             RadarHud.echoes.entrySet().removeIf(e -> e.getValue().entityId != keepId);
+            RadarHud.selectedTargetUuid = RadarHud.lockedEntity.getUUID();
             RadarHud.selectedEchoId = keepId;
             RadarHud.selectionInitialized = true;
         } else {
             RadarHud.echoes.clear();
+            RadarHud.selectedTargetUuid = null;
             RadarHud.selectedEchoId = -1;
             RadarHud.selectionInitialized = false;
         }
@@ -1253,6 +1151,8 @@ public final class RadarHudClientTicker {
         Entity target = RadarHud.lockedEntity;
         if (target != null) RadarHud.echoes.remove(target.getUUID());
         RadarHud.lockedEntity = null;
+        RadarHud.lockedTargetUuid = null;
+        RadarHud.lockedTargetSource = null;
         RadarHud.locked = false;
         RadarHud.lockAcquiring = false;
         RadarHud.lockAcquireTicks = 0;
@@ -1260,8 +1160,6 @@ public final class RadarHudClientTicker {
         RadarHud.lockAlpha = 0f;
         RadarHud.lockLostTicks = 0;
         RadarHud.lockAnchorPosition = Vec3.ZERO;
-        RadarHud.bvrAcquiring = false;
-        RadarHud.bvrAcquireTicks = 0;
         RadarHud.seekerInertial = false;
         RadarHud.seekerModel.reset();
         RadarHud.seekerRing.resetToCenter(0, 0);
@@ -1303,101 +1201,25 @@ public final class RadarHudClientTicker {
             lockMessage("TRK PD 为单目标跟踪，不能切换目标");
             return;
         }
+        Player player = Minecraft.getInstance().player;
+        if (player == null) return;
 
         if (RadarHud.currentMode == RadarMode.TWS) {
             TwsTrackManager.cycle();
             TwsTrack selected = TwsTrackManager.selected();
-            RadarHud.selectedEchoId = selected == null ? -1 : selected.entityId;
-            RadarHud.selectionInitialized = selected != null;
-            lockMessage(selected == null ? "无有效航迹" : "切换面板目标");
+            if (selected == null) {
+                TargetRegistry.clearSelection();
+                lockMessage("无有效航迹");
+                return;
+            }
+            RadarHud.selectedTargetUuid = selected.uuid;
+            RadarHud.selectedEchoId = selected.entityId;
+            RadarHud.selectionInitialized = true;
+            lockMessage("切换面板目标");
             return;
         }
 
-        record Candidate(int entityId, double range) {}
-        List<Candidate> valid = new ArrayList<>();
-        int tick = Minecraft.getInstance().player == null ? 0 : Minecraft.getInstance().player.tickCount;
-        java.util.UUID ownId = Minecraft.getInstance().player == null
-                ? null : Minecraft.getInstance().player.getUUID();
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (!echo.expired(tick) && echoAllowed(echo)) {
-                valid.add(new Candidate(echo.entityId, echo.range));
-            }
-        }
-        for (BvrTrack track : BvrState.active()) {
-            if (ownId != null && ownId.equals(track.uuid())) continue;
-            // 本地回波已覆盖的航迹由本地候选表示，不重复入队。
-            RadarEcho shadow = RadarHud.echoes.get(track.uuid());
-            if (shadow != null && !shadow.expired(tick)) continue;
-            BvrState.Paint paint = BvrState.painted(track.uuid());
-            if (paint == null) continue;
-            RadarTargetClass cls = switch (track.kind()) {
-                case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
-                case SURFACE -> RadarTargetClass.SEA;
-            };
-            if (!RadarHud.currentMode.accepts(cls)) continue;
-            valid.add(new Candidate(track.entityId(), paint.range()));
-        }
-        valid.sort(java.util.Comparator.comparingDouble(Candidate::range));
-        if (valid.isEmpty()) {
-            RadarHud.selectedEchoId = -1;
-            lockMessage("无有效回波");
-            return;
-        }
-        int index = -1;
-        for (int i = 0; i < valid.size(); i++) {
-            if (valid.get(i).entityId() == RadarHud.selectedEchoId) {
-                index = i;
-                break;
-            }
-        }
-        RadarHud.selectedEchoId = valid.get((index + 1) % valid.size()).entityId();
-        RadarHud.selectionInitialized = true;
-        lockMessage("切换面板目标");
-    }
-
-    /** 面板选择只由 Alt+T/扫描首次回波维护，不因视角移动自动换目标。 */
-    private static void validatePanelSelection() {
-        if (RadarHud.selectedEchoId < 0) {
-            if (!RadarHud.selectionInitialized && !RadarHud.echoes.isEmpty()) {
-                RadarEcho first = null;
-                for (RadarEcho echo : RadarHud.echoes.values()) {
-                    if (!echoAllowed(echo)) continue;
-                    if (first == null || echo.range < first.range) first = echo;
-                }
-                if (first != null) {
-                    RadarHud.selectedEchoId = first.entityId;
-                    RadarHud.selectionInitialized = true;
-                }
-            }
-            return;
-        }
-        for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (echo.entityId == RadarHud.selectedEchoId) {
-                if (echoAllowed(echo)) return;
-                break;
-            }
-        }
-        for (BvrTrack track : BvrState.active()) {
-            if (track.entityId() == RadarHud.selectedEchoId) {
-                BvrState.Paint paint = BvrState.painted(track.uuid());
-                if (paint != null) {
-                    RadarTargetClass cls = switch (track.kind()) {
-                        case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
-                        case SURFACE -> RadarTargetClass.SEA;
-                    };
-                    if (RadarHud.currentMode.accepts(cls)
-                            && RadarHud.currentMode != RadarMode.TWS) {
-                        Minecraft minecraft = Minecraft.getInstance();
-                        if (minecraft.player == null
-                                || !track.uuid().equals(minecraft.player.getUUID())) {
-                            return;
-                        }
-                    }
-                }
-                break;
-            }
-        }
-        RadarHud.selectedEchoId = -1;
+        TargetRegistry.selectNext(player, player.tickCount);
     }
 
     /** TWS 自动把扫描中心偏向当前唯一跟踪目标。 */
@@ -1419,11 +1241,11 @@ public final class RadarHudClientTicker {
         RadarHud.scanElevationOffsetDeg += (desiredEl - RadarHud.scanElevationOffsetDeg) * 0.25;
     }
 
-    /** STT/TRK PD 让扫描中心跟随硬锁目标，保持连续照射。 */
+    /** STT/TRK PD 让扫描中心跟随硬锁目标，本地/BVR 都保持连续照射。 */
     private static void followLockedTarget(Player player, int tick) {
-        Entity target = RadarHud.lockedEntity;
+        TrackedTarget target = TargetRegistry.find(RadarHud.lockedTargetUuid, player, tick);
         if (target == null) return;
-        Vec3 to = target.getBoundingBox().getCenter().subtract(player.getEyePosition());
+        Vec3 to = target.livePosition().subtract(player.getEyePosition());
         if (to.lengthSqr() < 1e-6) return;
         Vec3 look = player.getViewVector(1.0F).normalize();
         double targetAz = Math.toDegrees(RadarCore.azimuthBetween(look, to));
@@ -1446,6 +1268,17 @@ public final class RadarHudClientTicker {
             lastSweepRow = -1;
             RadarHud.prevSweepAzimuthDeg = RadarHud.sweepAzimuthDeg;
             RadarHud.prevSweepElevationDeg = RadarHud.sweepElevationDeg;
+            return;
+        }
+        if (RadarHud.isTrackingView()) {
+            // TRK PD 不扫描：天线锁定目标方向，扫描线/扫描波束全部停用。
+            lastSweepAzimuth = RadarHud.sweepAzimuthDeg;
+            lastSweepRow = scanRow;
+            RadarHud.prevSweepAzimuthDeg = RadarHud.sweepAzimuthDeg;
+            RadarHud.prevSweepElevationDeg = RadarHud.sweepElevationDeg;
+            RadarHud.scanStartTick = -1;
+            scanRow = -1;
+            lastSweepRow = -1;
             return;
         }
         if (RadarHud.scanStartTick < 0) {
@@ -1676,8 +1509,7 @@ public final class RadarHudClientTicker {
 
     private static boolean hasRadarSeekerSource() {
         return RadarHud.selectedMissile == MissileSpec.Guidance.IR
-                || (RadarHud.locked && RadarHud.lockedEntity != null)
-                || RadarHud.bvrLockedUuid != null
+                || RadarHud.hasActiveLockTarget()
                 || (RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null);
     }
@@ -1770,10 +1602,9 @@ public final class RadarHudClientTicker {
         RadarHud.acmReturnMode = RadarMode.SRC_PD;
         RadarHud.acmCooldownTicks = 0;
         RadarHud.seekerEnabledTicks = 0;
-        RadarHud.bvrAcquiring = false;
-        RadarHud.bvrAcquireTicks = 0;
-        RadarHud.bvrLockedUuid = null;
-        RadarHud.bvrLockedName = "";
+        RadarHud.lockedTargetUuid = null;
+        RadarHud.lockedTargetSource = null;
+        TargetRegistry.clearSelection();
         RadarHud.seekerModel.reset();
         RadarHud.seekerRing.resetToCenter(0, 0);
         // 不在这里立刻发“解除锁定”：松手发射的同一 tick 可能还没被服务端处理。
@@ -1786,6 +1617,7 @@ public final class RadarHudClientTicker {
         lastSentRadarOn = true;
         lastSentTrackQuality = 1f;
         lastSentBvrUuid = null;
+        lastSentSource = -1;
         lastSentTick = -100;
         lockTicks = 0;
         inertialTicks = 0;

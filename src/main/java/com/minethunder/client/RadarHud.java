@@ -4,6 +4,7 @@ import com.minethunder.missile.MissileSpec;
 import com.minethunder.radar.RadarContact;
 import com.minethunder.radar.RadarMode;
 import com.minethunder.radar.SeekerLockModel;
+import com.minethunder.radar.TargetSource;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
@@ -92,8 +93,40 @@ public final class RadarHud {
         return SCAN_PATTERNS[Math.floorMod(scanPatternIndex, SCAN_PATTERNS.length)];
     }
 
+    /** 是否处于 TRK PD 连续跟踪视图（本地硬锁或 BVR 远程锁，行为完全一致）。 */
+    public static boolean isTrackingView() {
+        return locked && lockedTargetUuid != null;
+    }
+
+    public static boolean hasActiveLockTarget() {
+        return lockedTargetUuid != null && (locked || lockAcquiring);
+    }
+
+    public static boolean isBvrLock() {
+        return isTrackingView() && lockedTargetSource == TargetSource.BVR;
+    }
+
+    public static boolean isBvrAcquiring() {
+        return lockAcquiring && lockedTargetSource == TargetSource.BVR;
+    }
+
+    /** 该 UUID 是否为当前锁定/截获目标（本地/BVR 通用）。 */
+    public static boolean isLockedTarget(java.util.UUID uuid) {
+        return uuid != null && uuid.equals(lockedTargetUuid)
+                && (locked || lockAcquiring);
+    }
+
+    /** 面板选中判定：统一按 UUID，旧实体 ID 仅作兼容回退。 */
+    public static boolean isSelected(java.util.UUID uuid, int entityId) {
+        if (selectedTargetUuid != null) {
+            return selectedTargetUuid.equals(uuid);
+        }
+        return entityId >= 0 && selectedEchoId == entityId;
+    }
+
     /** TRK PD 使用 ±120° 跟踪门限；ACM 按波束模式；其他模式使用当前搜索档位。 */
     public static double effectiveScanHalfDeg() {
+        if (isTrackingView()) return PANEL_AZIMUTH_DEG;
         if (currentMode == RadarMode.STT) return PANEL_AZIMUTH_DEG;
         if (currentMode == RadarMode.ACM) {
             return switch (acmBeamIndex) {
@@ -106,6 +139,7 @@ public final class RadarHud {
     }
 
     public static double effectiveScanElevationHalfDeg() {
+        if (isTrackingView()) return SCAN_ELEVATION_HALF_DEG;
         if (currentMode == RadarMode.STT) return SCAN_ELEVATION_HALF_DEG;
         if (currentMode == RadarMode.ACM) {
             return switch (acmBeamIndex) {
@@ -118,6 +152,7 @@ public final class RadarHud {
     }
 
     public static int effectiveScanRows() {
+        if (isTrackingView()) return SCAN_ELEVATION_ROWS;
         if (currentMode == RadarMode.STT) return SCAN_ELEVATION_ROWS;
         if (currentMode == RadarMode.ACM) {
             return switch (acmBeamIndex) {
@@ -137,7 +172,7 @@ public final class RadarHud {
 
     /** TRK PD 与 ACQ PD 共用当前距离档；ACM 仅在 ACM 搜索阶段使用独立距离。 */
     public static double effectiveRange() {
-        if (currentMode == RadarMode.STT) {
+        if (isTrackingView() || currentMode == RadarMode.STT) {
             return maxRange;
         }
         return isAcmContext() ? acmRange : maxRange;
@@ -145,11 +180,19 @@ public final class RadarHud {
     /** 扫描中心偏移：方向键平滑调整，右 Shift 复位；俯仰最大 ±60° */
     public static double scanAzimuthOffsetDeg = 0;
     public static double scanElevationOffsetDeg = 0;
-    /** 当前面板选中的回波实体 ID（只影响面板） */
+    /** 当前面板选中的目标 UUID（统一目标抽象，只影响面板） */
+    @Nullable
+    public static UUID selectedTargetUuid = null;
+    /** 当前面板选中的回波实体 ID（兼容旧渲染，由统一选中派生） */
     public static int selectedEchoId = -1;
     public static boolean selectionInitialized = false;
-    /** 是否处于锁定状态（STT / TRK PD） */
+    /** 是否处于锁定状态（STT / TRK PD，本地/BVR 共用） */
     public static boolean locked = false;
+    /** 当前锁定目标 UUID 与来源（本地实体或 BVR 数据链，唯一真源） */
+    @Nullable
+    public static UUID lockedTargetUuid = null;
+    @Nullable
+    public static TargetSource lockedTargetSource = null;
     /** 正在尝试建立 TRK PD 锁定 */
     public static boolean lockAcquiring = false;
     public static int lockAcquireTicks = 0;
@@ -177,18 +220,9 @@ public final class RadarHud {
     public static final int LOCK_ACQUIRE_TICKS = 20;
     public static final double NOTCH_BURN_THROUGH_RANGE =
             com.minethunder.radar.RadarCore.NOTCH_BURN_THROUGH_RANGE;
-    /** 当前锁定的目标 */
+    /** 当前锁定的目标（本地锁定为对应实体；BVR 远程锁为 null，走统一目标 UUID） */
     @Nullable
     public static net.minecraft.world.entity.Entity lockedEntity = null;
-    /** BVR 远程锁定目标（ARH 数据链专用，可能超出客户端实体跟踪范围） */
-    @Nullable
-    public static UUID bvrLockedUuid = null;
-    public static String bvrLockedName = "";
-    public static double bvrLockedDistance = 0;
-    public static double bvrLockedClosure = 0;
-    /** 正在尝试建立 BVR 远程锁定 */
-    public static boolean bvrAcquiring = false;
-    public static int bvrAcquireTicks = 0;
     /** 当前选中的弹种（决定 HUD 显示红外圆环还是雷达锁定环） */
     public static MissileSpec.Guidance selectedMissile = MissileSpec.Guidance.IR;
     /** 当前选中导弹的完整参数（决定 HUD 圆环尺寸与发射包线） */

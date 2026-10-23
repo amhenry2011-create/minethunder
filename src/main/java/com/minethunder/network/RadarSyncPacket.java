@@ -7,8 +7,16 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
+import javax.annotation.Nullable;
+import java.util.UUID;
+
+/**
+ * 统一雷达同步：本地锁定用 targetId，BVR 远程锁定用 targetUuid + targetSource。
+ * 服务端只保存一份锁定目标语义，不再维护客户端/服务端双状态。
+ */
 public record RadarSyncPacket(int targetId, int seekerState, int radarMode,
-                              boolean hardLock, boolean radarOn, float trackQuality)
+                              boolean hardLock, boolean radarOn, float trackQuality,
+                              @Nullable UUID targetUuid, int targetSource)
         implements CustomPacketPayload {
     public static final Type<RadarSyncPacket> TYPE =
             new Type<>(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("minethunder", "radar_sync"));
@@ -17,7 +25,14 @@ public record RadarSyncPacket(int targetId, int seekerState, int radarMode,
 
     public RadarSyncPacket(RegistryFriendlyByteBuf buf) {
         this(buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
-                buf.readBoolean(), buf.readBoolean(), buf.readFloat());
+                buf.readBoolean(), buf.readBoolean(), buf.readFloat(),
+                buf.readBoolean() ? buf.readUUID() : null, buf.readVarInt());
+    }
+
+    public RadarSyncPacket(int targetId, int seekerState, int radarMode,
+                           boolean hardLock, boolean radarOn, float trackQuality) {
+        this(targetId, seekerState, radarMode, hardLock, radarOn, trackQuality,
+                null, 0);
     }
 
     public void encode(RegistryFriendlyByteBuf buf) {
@@ -27,6 +42,9 @@ public record RadarSyncPacket(int targetId, int seekerState, int radarMode,
         buf.writeBoolean(hardLock);
         buf.writeBoolean(radarOn);
         buf.writeFloat(trackQuality);
+        buf.writeBoolean(targetUuid != null);
+        if (targetUuid != null) buf.writeUUID(targetUuid);
+        buf.writeVarInt(targetSource);
     }
 
     @Override
@@ -36,9 +54,8 @@ public record RadarSyncPacket(int targetId, int seekerState, int radarMode,
 
     public void handle(IPayloadContext context) {
         if (context.player() instanceof ServerPlayer player) {
-            // BVR 远程锁定不随雷达快照被清空，由服务端自行续期/校验。
-            ServerRadarState.refreshLockState(player, targetId, seekerState, radarMode,
-                    hardLock, radarOn, trackQuality);
+            ServerRadarState.update(player, targetId, seekerState, radarMode,
+                    hardLock, radarOn, trackQuality, targetUuid, targetSource);
         }
     }
 }

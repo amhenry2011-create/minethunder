@@ -77,18 +77,21 @@ public final class SensorDebugWorldRenderer {
         List<Beam> beams = new ArrayList<>();
         Vec3 eye = ClientRenderMath.eye(player, partialTick);
         if (RadarHud.currentMode == RadarMode.STT) {
-            Entity target = RadarHud.lockedEntity;
-            if (target != null && target.isAlive()) {
-                addTargetBeam(beams, eye, target, partialTick, LOCK_FILL, LOCK_EDGE);
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, player, player.tickCount);
+            if (tracked != null && tracked.alive(player)) {
+                addTrackedBeam(beams, eye, tracked, partialTick, LOCK_FILL, LOCK_EDGE);
             }
             return beams;
         }
 
-        if (RadarHud.lockAcquiring && RadarHud.lockedEntity != null
-                && RadarHud.lockedEntity.isAlive()) {
-            addTargetBeam(beams, eye, RadarHud.lockedEntity, partialTick,
-                    LOCK_FILL, LOCK_EDGE);
-            return beams;
+        if (RadarHud.lockAcquiring) {
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, player, player.tickCount);
+            if (tracked != null && tracked.alive(player)) {
+                addTrackedBeam(beams, eye, tracked, partialTick, LOCK_FILL, LOCK_EDGE);
+                return beams;
+            }
         }
 
         if (RadarHud.currentMode == RadarMode.TWS) {
@@ -96,7 +99,7 @@ public final class SensorDebugWorldRenderer {
             for (TwsTrack track : TwsTrackManager.tracks()) {
                 Entity target = TwsTrackManager.entity(track.entityId);
                 if (target == null || !target.isAlive()) continue;
-                boolean selected = track.entityId == RadarHud.selectedEchoId;
+                boolean selected = RadarHud.isSelected(track.uuid, track.entityId);
                 addTargetBeam(beams, eye, target, partialTick,
                         selected ? SELECTED_FILL : TRACK_FILL,
                         selected ? SELECTED_EDGE : TRACK_EDGE);
@@ -120,6 +123,22 @@ public final class SensorDebugWorldRenderer {
         Vec3 far = near.add(dir.scale(range));
         double farHalf = Math.max(0.45, Math.min(5.0, range * 0.012));
         beams.add(new Beam(near, far, NEAR_HALF, farHalf, fill, edge));
+    }
+
+    /** 统一目标波束：本地实体走包围盒，BVR 用数据链实时位置。 */
+    private static void addTrackedBeam(List<Beam> beams, Vec3 eye, TrackedTarget target,
+                                       float partialTick, int fill, int edge) {
+        if (target.entity != null) {
+            addTargetBeam(beams, eye, target.entity, partialTick, fill, edge);
+            return;
+        }
+        Vec3 far = target.livePosition();
+        Vec3 to = far.subtract(eye);
+        if (to.lengthSqr() < 0.01) return;
+        Vec3 dir = to.normalize();
+        Vec3 near = eye.add(dir.scale(NEAR_DISTANCE));
+        if (far.distanceTo(near) < 0.1) return;
+        beams.add(new Beam(near, far, NEAR_HALF, 0.8, fill, edge));
     }
 
     private static void addTargetBeam(List<Beam> beams, Vec3 eye, Entity target,

@@ -1,9 +1,31 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-23
-状态：BVR 面板坐标「扫到才冻结」+ 锁定不问弹种 + Alt+T 循环含 BVR 航迹修正。已构建待实测。
+状态：统一目标抽象重构（BVR 完全继承普通 TRK）+ BVR 发射同步/反馈修复 + ARH pitbull 放宽。已构建待实测。
 
-## 2026-10-23 四轮：锁定不问弹种 + BVR 面板坐标「扫到才冻结」+ Alt+T 循环含 BVR 航迹（最新）
+## 2026-10-23 五轮：统一目标抽象 + BVR 发射同步/反馈 + ARH 放宽（最新）
+
+### 用户反馈与决议
+- “BVR 目标还是扫描太大 / 锁上后雷达还在扫” → BVR 锁定完成现在和本地一样切 `currentMode=STT`，TRK 视图固定 ±120°、天线跟随目标、扫描线/扫描波束全部停用（`RadarHud.isTrackingView()` 统一判定）。
+- “BVR 锁上之后发射不出导弹（静默失败）” → 移除两套并行 BVR 锁定状态（`BvrLockPacket`/`bvrAcquiring/bvrLockedUuid`），改为唯一 `TargetRegistry`/`TrackedTarget` + `RadarSyncPacket(targetUuid,targetSource)`；服务端所有拒绝原因走 actionbar。
+- “ARH 50 格打不中” → `seekerFovDeg=12°` 不再是制导硬限：`guidanceFovDeg` 统一 `angleMaxDeg=30°`，`ArhMissileArrow` 捕获锥 12°→30°、重捕冷却 10t→3t（`BUG_REPORT` P0-1 结项）。
+
+### 本轮改动
+1. 新增 `radar/TargetSource`、`client/TrackedTarget`、`client/TargetRegistry`：本地回波 ∪ BVR 航迹统一候选/选择（Alt+T）/锁定候选（Alt+F）；本地优先去重、涂抹新鲜度与面板坐标共用。
+2. `RadarHud` 统一字段 `selectedTargetUuid/lockedTargetUuid/lockedTargetSource` 与 helper（`isTrackingView/hasActiveLockTarget/isBvrLock/isBvrAcquiring/isLockedTarget/isSelected`）；删除旧 `bvrLocked*/bvrAcquiring*` 字段。
+3. `RadarHudClientTicker` 统一锁定生命周期（`beginLockAcquisition→updateLockAcquisition→completeLock→updateContinuousTrack`）；BVR ACQ 不要求物理波束持续命中，由 `refreshBvrPaint` 每 tick 续涂抹；`completeLock` 切 STT 并设 `lastMode` 防止下一 tick 清锁。
+4. `RadarSyncPacket` 增加 `targetUuid/targetSource` 字段；`ServerRadarState.update` 统一入口；删除 `BvrLockPacket` 与 Network 注册、`refreshLockState/setBvrTarget`。
+5. `MissileFirePacket` 每个拒绝分支 actionbar 反馈；`KeyInputHandler.notifyClient` 恢复 `displayClientMessage`；发射门限统一为导引头模型（ARH `canLaunchArh`、SARH `canLaunchSarh`、IR 热源），删除 BVR 专用 ≥10 tick 门控；TRK/TWS/ACQ 冻结距离档与扫描宽度。
+6. `RadarHudRenderer`/`SensorDebug*` 全面迁移统一目标（ACQ/TRK 框、模式字、面板高亮、导引头层、目标棱柱、strobe）；BVR 目标无本地实体时用 `TrackedTarget.livePosition()`。
+7. `MissileSpec.guidanceFovDeg` 统一返回 `angleMaxDeg`；`ArhMissileArrow.inSeekerCone/findRadarTarget` 用 `angleMaxDeg` 且冷却 3t；`BUG_REPORT.md` P0-1、表格 2/11 结项；`BVR.md` 组件与流程更新。
+
+### 待办/下次优先
+- 实机：BVR 锁（Alt+F）→ 模式字 TRK PD、面板不再扫描、天线跟随；发射 SARH/ARH 均有反馈（失败必有 actionbar 原因）。
+- 实机：ARH 50-200 格对头/横穿命中率；pitbull 后大离轴重捕是否正常。
+- 若 ARH 仍迟钝，再把 `rateMaxDegPerSec` 15→20 并复测（本轮未改）。
+- 版本号仍 0.1.0；是否升 0.1.1 待用户决定（本轮未改 `gradle.properties`）。
+
+## 2026-10-23 四轮：锁定不问弹种 + BVR 面板坐标「扫到才冻结」+ Alt+T 循环含 BVR 航迹（上一轮）
 
 ### 用户反馈与决议
 - "雷达锁定不需要弹种的区分" → `beginBvrLockAcquisition` 删除 SARH/ARH 弹种门控（发射时才按弹种校验），任何弹下 Alt+F 都可发起远程锁。

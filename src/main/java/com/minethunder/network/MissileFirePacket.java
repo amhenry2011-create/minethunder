@@ -59,6 +59,7 @@ public record MissileFirePacket(int guidance, int targetId,
 
         int slot = findAmmo(player, spec);
         if (slot < 0) {
+            reject(player, "无可用导弹");
             return;
         }
 
@@ -66,6 +67,7 @@ public record MissileFirePacket(int guidance, int targetId,
         if (spec.guidance == MissileSpec.Guidance.IR) {
             target = player.serverLevel().getEntity(targetId);
             if (target == null || !IrTargeting.valid(player.serverLevel(), player, target, spec)) {
+                reject(player, "红外导引头未锁定热源");
                 return;
             }
         } else {
@@ -81,42 +83,65 @@ public record MissileFirePacket(int guidance, int targetId,
                 // BVR 远程锁定：直接按 UUID 解析目标，跳过本地回波扫描。
                 target = player.serverLevel().getEntity(bvrUuid);
             }
-            if (state == null || !state.radarOn()
-                    || target == null || !target.isAlive() || target == player) {
+            if (state == null || !state.radarOn()) {
+                reject(player, "雷达未开启");
+                return;
+            }
+            if (target == null || !target.isAlive() || target == player) {
+                reject(player, "雷达目标丢失");
                 return;
             }
             var targetClass = RadarCore.classify(target);
-            if (targetClass == null) return;
-            if (!mode.accepts(targetClass)) return;
-            if (player.distanceTo(target) > spec.maxDistance) return;
+            if (targetClass == null) {
+                reject(player, "目标类型无效");
+                return;
+            }
+            if (!mode.accepts(targetClass)) {
+                reject(player, "目标不适用当前雷达模式");
+                return;
+            }
+            if (player.distanceTo(target) > spec.maxDistance) {
+                reject(player, "目标超出导弹射程");
+                return;
+            }
             Vec3 to = target.getBoundingBox().getCenter().subtract(player.getEyePosition());
             Vec3 look = player.getViewVector(1.0F).normalize();
             double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
             double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
-            if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) return;
+            if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) {
+                reject(player, "目标超出雷达跟踪包线");
+                return;
+            }
             if (!bvrLock) {
                 final Entity scannedTarget = target;
                 boolean scanned = RadarCore.scan(player.level(), player.getEyePosition(),
                         look, mode, spec.maxDistance, Math.toRadians(120.0),
                         Math.toRadians(60.0), player.getDeltaMovement(), player)
                         .stream().anyMatch(c -> c.entity.getId() == scannedTarget.getId());
-                if (!scanned) return;
+                if (!scanned) {
+                    reject(player, "目标不在雷达扫描范围内");
+                    return;
+                }
             }
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),
                     target.getBoundingBox().getCenter(), targetClass)) {
+                reject(player, "目标被地形遮挡");
                 return;
             }
             if (spec.guidance == MissileSpec.Guidance.ARH
                     && !ServerRadarState.canLaunchArh(player)) {
+                reject(player, "ARH 数据链未就绪");
                 return;
             }
             if (spec.guidance == MissileSpec.Guidance.SARH
                     && !ServerRadarState.canLaunchSarh(player)) {
+                reject(player, "SARH 照射未就绪");
                 return;
             }
         }
 
         if (MissileLaunchService.launch(player.serverLevel(), player, spec, target) == null) {
+            reject(player, "发射失败");
             return;
         }
         if (slot < player.getInventory().items.size()) {
@@ -124,6 +149,11 @@ public record MissileFirePacket(int guidance, int targetId,
         } else {
             player.getInventory().offhand.get(slot - player.getInventory().items.size()).shrink(1);
         }
+    }
+
+    /** 发射被服务端拒绝时的 actionbar 反馈，避免客户端静默失败。 */
+    private static void reject(ServerPlayer player, String reason) {
+        player.displayClientMessage(Component.literal(reason), true);
     }
 
     private static int findAmmo(ServerPlayer player, MissileSpec spec) {

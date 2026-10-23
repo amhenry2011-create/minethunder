@@ -109,10 +109,6 @@ public final class RadarHudRenderer {
             modeText = "ACQ PD";
         } else if (RadarHud.locked) {
             modeText = "TRK PD";
-        } else if (RadarHud.bvrAcquiring) {
-            modeText = "ACQ PD";
-        } else if (RadarHud.bvrLockedUuid != null) {
-            modeText = "TRK PD";
         }
         int outsideY = py - 11;
         g.drawString(mc.font, modeText, px, outsideY, GREEN, false);
@@ -252,8 +248,7 @@ public final class RadarHudRenderer {
                 case SURFACE -> RadarTargetClass.SEA;
             };
             if (!RadarHud.currentMode.accepts(bvrClass)) continue;
-            boolean isLockedBvr = RadarHud.bvrLockedUuid != null
-                    && RadarHud.bvrLockedUuid.equals(track.uuid());
+            boolean isLockedBvr = RadarHud.isLockedTarget(track.uuid());
             if (RadarHud.currentMode == RadarMode.STT && !isLockedBvr) continue;
             // 波束涂抹记忆：只有被扫描波束实际扫过的航迹才显示；
             // 已锁定的 BVR 目标除外（同 TRK PD 连续跟踪，保持实时位置）。
@@ -359,8 +354,7 @@ public final class RadarHudRenderer {
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
             if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
             // 波束涂抹记忆：只显示被扫描波束扫过的航迹；锁定目标保持实时位置。
-            boolean lockedBvr = RadarHud.bvrLockedUuid != null
-                    && RadarHud.bvrLockedUuid.equals(track.uuid());
+            boolean lockedBvr = RadarHud.isLockedTarget(track.uuid());
             BvrState.Paint paint = BvrState.painted(track.uuid());
             Vec3 predicted;
             Vec3 velocity;
@@ -526,7 +520,7 @@ public final class RadarHudRenderer {
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
         boolean lineVisible = RadarHud.locked
                 || RadarHud.currentMode == RadarMode.TWS
-                || RadarHud.bvrLockedUuid != null;
+                || RadarHud.hasActiveLockTarget();
         float[] target = RadarHud.project((float) RadarHud.guidanceTargetAzimuthDeg,
                 RadarHud.guidanceTargetDistance, range, size);
         int tx = px + (int) target[0];
@@ -673,7 +667,7 @@ public final class RadarHudRenderer {
                 && RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null ? TwsTrackManager.selected() : null;
         if (radarGuided && !RadarHud.locked) {
-            if (softTrack != null || RadarHud.bvrLockedUuid != null) {
+            if (softTrack != null || RadarHud.hasActiveLockTarget()) {
                 drawRadarLockLayer(g, mc, screenW, screenH,
                         Math.max(0.55f, HudScale.factor(screenW, screenH)));
                 return;
@@ -746,7 +740,7 @@ public final class RadarHudRenderer {
         boolean hasTarget = RadarHud.lockedEntity != null
                 || (RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null)
-                || RadarHud.bvrLockedUuid != null;
+                || RadarHud.hasActiveLockTarget();
         if (!hasTarget) return;
         double rx = RadarHud.seekerRing.x();
         double ry = RadarHud.seekerRing.y();
@@ -781,21 +775,16 @@ public final class RadarHudRenderer {
     private static void renderTargetLock(GuiGraphics g, int screenW, int screenH) {
         Minecraft mc = Minecraft.getInstance();
         Entity target = RadarHud.lockedEntity;
-        if (target == null && RadarHud.bvrLockedUuid == null) return;
+        if (target == null && !RadarHud.hasActiveLockTarget()) return;
 
-        // ACQ PD 尝试锁定：四角闪烁框，本地锚定发起时的扫描点；
-        // BVR 远程截获同样绘制，锚定被波束扫到的涂抹位置。即使当前选中的是 IR 弹也显示。
-        if (RadarHud.lockAcquiring || RadarHud.bvrAcquiring) {
+        // ACQ PD 尝试锁定：四角闪烁框，锚定发起时的扫描点；本地/BVR 同规。
+        if (RadarHud.lockAcquiring) {
             Vec3 anchor = RadarHud.lockAnchorPosition;
-            if (RadarHud.bvrAcquiring && (anchor == null || anchor.lengthSqr() < 1.0E-6)) {
-                BvrTrack acquiring = RadarHud.bvrLockedUuid == null ? null
-                        : BvrState.get(RadarHud.bvrLockedUuid);
-                if (acquiring == null) return;
-                anchor = BvrState.lagCompensatedPosition(acquiring);
-            } else if (RadarHud.lockAcquiring && (anchor == null
-                    || anchor.lengthSqr() < 1.0E-6)) {
-                if (target == null) return;
-                anchor = target.getBoundingBox().getCenter();
+            if (anchor == null || anchor.lengthSqr() < 1.0E-6) {
+                TrackedTarget tracked = TargetRegistry.find(
+                        RadarHud.lockedTargetUuid, mc.player, mc.player.tickCount);
+                if (tracked == null) return;
+                anchor = tracked.livePosition();
             }
             float[] ap = worldToScreen(anchor, mc.player, screenW, screenH);
             if (ap == null) return;
@@ -812,12 +801,12 @@ public final class RadarHudRenderer {
             return;
         }
 
-        // BVR 远程 TRK：与本地锁定完全相同的绿色框样式，数据来自 BVR 数据链航迹。
+        // BVR 远程 TRK：与本地锁定完全相同的绿色框样式，数据来自统一目标。
         if (target == null) {
-            BvrTrack bvrTarget = RadarHud.bvrLockedUuid == null ? null
-                    : BvrState.get(RadarHud.bvrLockedUuid);
-            if (bvrTarget == null) return;
-            Vec3 bvrPos = BvrState.lagCompensatedPosition(bvrTarget);
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, mc.player, mc.player.tickCount);
+            if (tracked == null) return;
+            Vec3 bvrPos = tracked.livePosition();
             float[] p = worldToScreen(bvrPos, mc.player, screenW, screenH);
             if (p == null) return;
             int tx = (int) p[0];
@@ -826,13 +815,12 @@ public final class RadarHudRenderer {
             int b = Math.max(12, Math.round(LOCK_BOX_HALF * ui));
             drawRectBorder(g, tx - b, ty - b, b * 2, b * 2, GREEN);
 
-            String name = bvrTarget.name();
-            if (name == null || name.isEmpty()) name = "?";
+            String name = tracked.displayName();
             String info = String.format("%.1f b",
                     mc.player.getEyePosition().distanceTo(bvrPos));
-            String closure = String.format("%.0f b/s", RadarHud.bvrLockedClosure);
+            String closure = String.format("%.0f b/s", RadarHud.lockedClosure);
             int off = Math.max(20, Math.round(40 * ui));
-            Vec3 velocity = bvrTarget.velocity();
+            Vec3 velocity = tracked.velocity();
             double speed = velocity.horizontalDistance() * 20.0;
             int heading = Math.round(((float) (Math.toDegrees(
                     Math.atan2(-velocity.x, velocity.z)) % 360) + 360) % 360);
@@ -1326,11 +1314,12 @@ public final class RadarHudRenderer {
             if (echo == null || echo.expired(mc.player.tickCount)) return;
             dist = echo.range;
             az = echo.azimuthDeg;
-        } else if (RadarHud.bvrLockedUuid != null) {
+        } else if (RadarHud.lockedTargetUuid != null) {
             // BVR 远程锁定同样给面板白光条，作用与本地 TRK 一致。
-            BvrTrack bvrTarget = BvrState.get(RadarHud.bvrLockedUuid);
-            if (bvrTarget == null) return;
-            Vec3 pos = BvrState.lagCompensatedPosition(bvrTarget);
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, mc.player, mc.player.tickCount);
+            if (tracked == null) return;
+            Vec3 pos = tracked.livePosition();
             Vec3 eye = mc.player.getEyePosition();
             Vec3 to = pos.subtract(eye);
             dist = to.length();
@@ -1350,7 +1339,7 @@ public final class RadarHudRenderer {
     }
 
     private static void drawLaunchAssessment(GuiGraphics g, int px, int py, int size) {
-        if (!RadarHud.radarOn || !RadarHud.locked || RadarHud.lockedEntity == null
+        if (!RadarHud.radarOn || !RadarHud.locked
                 || RadarHud.selectedSpec == null) return;
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
         int right = px + size - 4;

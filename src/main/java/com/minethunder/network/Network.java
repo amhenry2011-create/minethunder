@@ -27,8 +27,6 @@ public final class Network {
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
         registrar.playToClient(BvrSyncPacket.TYPE, BvrSyncPacket.STREAM_CODEC,
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
-        registrar.playToServer(BvrLockPacket.TYPE, BvrLockPacket.STREAM_CODEC,
-                (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
     }
 
     public static void sendToServer(CustomPacketPayload message) {

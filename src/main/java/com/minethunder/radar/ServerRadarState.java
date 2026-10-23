@@ -26,29 +26,6 @@ public final class ServerRadarState {
     /** BVR 远程锁定最小距离（格），与服务端 validateBvrTarget 一致。 */
     public static final double BVR_LOCK_MIN_RANGE = 16.0;
 
-    /**
-     * 设置/解除 BVR 远程目标。来自 BvrLockPacket；实体必须已加载且为 AIR 类。
-     */
-    public static void setBvrTarget(ServerPlayer player, @Nullable UUID targetUuid) {
-        LockState state = LOCKS.get(player.getUUID());
-        if (state == null) return;
-        if (!state.radarOn()) return;
-        long now = player.serverLevel().getGameTime();
-        if (now - state.updatedAt() > EXPIRE_TICKS) {
-            LOCKS.remove(player.getUUID());
-            return;
-        }
-        if (state.targetId() >= 0 && targetUuid != null) {
-            // 已有本地硬锁/TWS 目标时忽略 BVR 锁定。
-            return;
-        }
-        LOCKS.put(player.getUUID(), new LockState(state.targetId(), state.targetUuid(),
-                state.dimension(), state.seekerState(), state.radarMode(),
-                state.hardLock(), state.radarOn(), now, state.trackQuality(),
-                validateBvrTarget(player, targetUuid, state.dimension())
-                        ? targetUuid : null));
-    }
-
     @Nullable
     public static UUID getBvrTargetUuid(Player player) {
         LockState state = get(player);
@@ -77,12 +54,17 @@ public final class ServerRadarState {
                               int radarMode, boolean hardLock, boolean radarOn,
                               float trackQuality) {
         update(player, targetId, seekerState, radarMode, hardLock, radarOn,
-                trackQuality, null);
+                trackQuality, null, TargetSource.LOCAL.ordinal());
     }
 
+    /**
+     * 统一雷达同步入口：本地目标按实体 id 解析，BVR 目标按 UUID 校验后保存。
+     * 每次包都是权威快照，BVR 引用随包更新/清除，不再依赖 keep-old 逻辑。
+     */
     public static void update(ServerPlayer player, int targetId, int seekerState,
                               int radarMode, boolean hardLock, boolean radarOn,
-                              float trackQuality, @Nullable UUID bvrTargetUuid) {
+                              float trackQuality, @Nullable UUID targetUuid,
+                              int targetSource) {
         if (!radarOn) {
             LOCKS.remove(player.getUUID());
             return;
@@ -94,29 +76,16 @@ public final class ServerRadarState {
         float safeQuality = Float.isFinite(trackQuality)
                 ? Math.max(0.0f, Math.min(1.0f, trackQuality)) : 0.0f;
         Entity target = player.serverLevel().getEntity(safeTarget);
-        java.util.UUID targetUuid = target == null ? null : target.getUUID();
+        java.util.UUID localUuid = target == null ? null : target.getUUID();
         ResourceKey<Level> dimension = player.serverLevel().dimension();
-        if (!validateBvrTarget(player, bvrTargetUuid, dimension)) {
-            bvrTargetUuid = null;
+        java.util.UUID bvrUuid = null;
+        if (targetSource == TargetSource.BVR.ordinal() && safeTarget < 0
+                && validateBvrTarget(player, targetUuid, dimension)) {
+            bvrUuid = targetUuid;
         }
-        LOCKS.put(player.getUUID(), new LockState(safeTarget, targetUuid, dimension,
+        LOCKS.put(player.getUUID(), new LockState(safeTarget, localUuid, dimension,
                 safeSeeker, safeMode, hardLock, true,
-                player.serverLevel().getGameTime(), safeQuality, bvrTargetUuid));
-    }
-
-    /**
-     * 从 {@link RadarSyncPacket} 快照解析本地雷达状态；保持已有 BVR 锁定引用。
-     */
-    public static void refreshLockState(ServerPlayer player, int targetId, int seekerState,
-                                        int radarMode, boolean hardLock, boolean radarOn,
-                                        float trackQuality) {
-        UUID keepBvr = null;
-        LockState old = LOCKS.get(player.getUUID());
-        if (old != null && player.serverLevel().getGameTime() - old.updatedAt() <= EXPIRE_TICKS) {
-            keepBvr = old.bvrTargetUuid();
-        }
-        update(player, targetId, seekerState, radarMode, hardLock, radarOn,
-                trackQuality, keepBvr);
+                player.serverLevel().getGameTime(), safeQuality, bvrUuid));
     }
 
     /** BVR 远程锁定：仅 AIR 类别，同一维度，全员可锁定距离内。 */
@@ -129,7 +98,7 @@ public final class ServerRadarState {
         if (!dimension.equals(player.serverLevel().dimension())) return false;
         if (RadarCore.classify(entity) != RadarTargetClass.AIR) return false;
         double distance = player.distanceTo(entity);
-        return distance > 16.0 && distance <= BVR_LOCK_RANGE;
+        return distance > BVR_LOCK_MIN_RANGE && distance <= BVR_LOCK_RANGE;
     }
 
     public static LockState get(Player player) {

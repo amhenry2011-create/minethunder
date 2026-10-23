@@ -23,6 +23,10 @@
 
 ### P0-1 红外/半主动弹把「导引头视场」当作「发射后偏转极限」，离轴发射不制导
 
+**状态：已修复（2026-10-23）**
+- `MissileSpec.guidanceFovDeg` 统一返回 `angleMaxDeg`：`seekerFovDeg` 只保留给 HUD 内环与导引头捕获判断，不再作为制导硬限。
+- `ArhMissileArrow.inSeekerCone`/`findRadarTarget` 改用 `angleMaxDeg`，pitbull 重捕不再因 12° 锥体+10t 冷却丢目标（冷却 10→3）。
+
 **位置**
 - `src/main/java/com/minethunder/missile/MissileSpec.java:110-115`
 - `src/main/java/com/minethunder/missile/MissileArrow.java:489-493`
@@ -334,7 +338,7 @@ speedMps = Math.max(0, Math.min(speedMps, spec.endSpeed));
 | 编号 | 审计项 | 现状 | 证据 |
 |---|---|---|---|
 | 1 | 径向速度单位错误、SRC PD 误判 Notch | **已修复** | `radar/RadarCore.java:80-81` 统一 `scale(20.0)`；`RadarHudClientTicker.java:672-677` 同步 |
-| 2 | IR 绕过导引头 FOV / rateMax | **部分修复** | `MissileArrow.java:115-117` 已让 IR 不享数据链；但制导视场换成 `seekerFovDeg` 又引入 P0-1 |
+| 2 | IR 绕过导引头 FOV / rateMax | **已修复** | IR 不享数据链；制导视场统一 `angleMaxDeg`（P0-1 修复），`seekerFovDeg` 只做 HUD/捕获判断 |
 | 3 | 导弹撞实体不触发战斗部 | **已修复** | `MissileArrow.java:370-382` 重写 `onHitEntity / onHitBlock` |
 | 4 | 发射初速重复计算载机速度 | **已修复，但被两处抵消** | `MissileArrow.java:128-149` 逻辑正确；弓路径被原版 `shoot()` 覆盖（P1-2），又被 `endSpeed` 截断（P1-6） |
 | 5 | 雷达弹服务端权威不足 | **部分修复** | `MissileFirePacket.java:74-92` 增加距离 / 角度 / LOS / 类别校验；`RadarSyncPacket` 仍全盘信任客户端（P0-4） |
@@ -343,7 +347,7 @@ speedMps = Math.max(0, Math.min(speedMps, spec.endSpeed));
 | 8 | 失锁 / 末段视场不完整 | **部分修复** | IR/SARH 有 `lostLockTicks` 计时与自爆；ARH 有 `inSeekerCone` 重捕获；但制导视场参数用错 |
 | 9 | 雷达目标同步可被伪造 | **仍存在** | 见 P0-4、P1-1 |
 | 10 | 能量模型问题 | **部分修复** | `massAt()` 已用于推力（`MissileSpec.java:127-137`）；诱导阻力已乘 `dt`；爬升项量纲仍错（P2-1） |
-| 11 | 发射提前量与导引头视场冲突 | **仍存在** | `lockAngleMax=30` 允许发射，制导只用 8°（P0-1） |
+| 11 | 发射提前量与导引头视场冲突 | **已修复** | 制导统一 `angleMaxDeg`；ARH pitbull 捕获锥 12°→30°、重捕冷却 10t→3t（P0-1） |
 | 12 | 近炸与干扰弹 | **部分修复** | 近炸已改为扫掠线段判定（`MissileArrow.java:353-359`）；干扰弹仍无 LOS 校验（P2-7） |
 | 13 | 热源阈值与文档不一致 | **未改（设计如此）** | `IrHeat.java:22` 阈值 100；怪物 90 / 动物 70 / 亡灵 30 |
 | 14 | TWS 质量虚高、回波分类残留 | **部分修复** | `TwsTrackManager.java:38` 的 `confirmed = hits >= 2` 已改；质量保底仍在（P2-3） |

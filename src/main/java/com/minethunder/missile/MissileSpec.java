@@ -108,12 +108,13 @@ public final class MissileSpec {
         return t >= ignitionDelay() && t <= ignitionDelay() + timeFire;
     }
 
-    /** 当前制导视场：SARH/ARH 中段使用弹体可用转向角，ARH 末段/IR 使用导引头 FOV。 */
+    /**
+     * 当前制导视场：全弹种使用弹体可用转向角 angleMax。
+     * seekerFov 只用于导引头捕获判断与 HUD 内环展示，不再作为制导硬限，
+     * 避免发射允许角（lockAngleMax）大于制导角导致末段直接失控。
+     */
     public double guidanceFovDeg(boolean pitbullActive) {
-        return switch (guidance) {
-            case SARH, IR -> angleMaxDeg;
-            case ARH -> pitbullActive ? seekerFovDeg : angleMaxDeg;
-        };
+        return angleMaxDeg;
     }
 
     /** 发射时导引头可捕获目标的距离：红外用全向锁定距离，雷达弹用锁定距离 */

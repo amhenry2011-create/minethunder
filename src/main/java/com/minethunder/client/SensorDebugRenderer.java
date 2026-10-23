@@ -93,12 +93,13 @@ public final class SensorDebugRenderer {
         RadarMode mode = RadarHud.currentMode;
         boolean tracking = mode == RadarMode.STT;
         boolean acq = RadarHud.lockAcquiring;
-        boolean useSearch = !tracking && !(acq && RadarHud.lockedEntity != null);
+        boolean useSearch = !tracking && !(acq && RadarHud.hasActiveLockTarget());
 
         if (tracking) {
-            Entity target = RadarHud.lockedEntity;
-            if (target != null && target.isAlive()) {
-                drawBeamToTarget(g, player, near, target, screenW, screenH, partialTick,
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, player, player.tickCount);
+            if (tracked != null && tracked.alive(player)) {
+                drawBeamToTracked(g, player, near, tracked, screenW, screenH, partialTick,
                         0x32A8FFB0, 0xFF9FFF9F);
             }
             return;
@@ -127,10 +128,28 @@ public final class SensorDebugRenderer {
 
         drawContactBeams(g, mc, player, near, screenW, screenH, mode, partialTick);
 
-        if (acq && RadarHud.lockedEntity != null && RadarHud.lockedEntity.isAlive()) {
-            drawBeamToTarget(g, player, near, RadarHud.lockedEntity, screenW, screenH,
-                    partialTick, 0x3448FF88, 0xFF9FFF9F);
+        if (acq) {
+            TrackedTarget tracked = TargetRegistry.find(
+                    RadarHud.lockedTargetUuid, player, player.tickCount);
+            if (tracked != null && tracked.alive(player)) {
+                drawBeamToTracked(g, player, near, tracked, screenW, screenH,
+                        partialTick, 0x3448FF88, 0xFF9FFF9F);
+            }
         }
+    }
+
+    /** 统一目标波束：本地用实体包围盒，BVR 用数据链实时位置。 */
+    private static boolean drawBeamToTracked(GuiGraphics g, Player player, Vec3[] near,
+                                             TrackedTarget target, int screenW, int screenH,
+                                             float partialTick, int fill, int edge) {
+        if (target.entity != null) {
+            return drawBeamToTarget(g, player, near, target.entity,
+                    screenW, screenH, partialTick, fill, edge);
+        }
+        Vec3 center = target.livePosition();
+        Vec3 dir = center.subtract(ClientRenderMath.eye(player, partialTick)).normalize();
+        return drawBeamToPoint(g, player, near, center, dir, 0.8,
+                screenW, screenH, partialTick, fill, edge);
     }
 
     private static void drawContactBeams(GuiGraphics g, Minecraft mc, Player player, Vec3[] near,
