@@ -62,10 +62,10 @@ public final class RadarHud {
     /** 非 ACM 单行扫描 tick 数；7 行全帧约 8.4 秒。 */
     public static final int SCAN_ROW_TICKS = 14;
 
-    /** ACM 独立搜索参数：默认贴近 Demo，并允许在 ACM 内调整。 */
-    public static final double[] ACM_RANGES = {10, 20, 40, 100, 300};
+    /** ACM 独立搜索参数：视距内近距使用，不做超视距搜索，允许在 ACM 内调整。 */
+    public static final double[] ACM_RANGES = {100, 300};
     public static final double[] ACM_SCAN_WIDTHS = {6, 20, 40, 60, 120};
-    public static int acmRangeIndex = 3;
+    public static int acmRangeIndex = 0;
     public static int acmScanWidthIndex = 0;
     public static double acmRange = 100;
     public static double acmScanHalfDeg = 6;

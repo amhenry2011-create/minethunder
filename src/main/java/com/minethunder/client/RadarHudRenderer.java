@@ -234,6 +234,8 @@ public final class RadarHudRenderer {
         }
 
         // BVR 远程航迹：与普通目标完全相同的样式/颜色（无专属符号），数据来自服务端同步。
+        // ACM 是纯视距内自动截获，不显示超视距数据链目标。
+        if (RadarHud.currentMode == RadarMode.ACM) return;
         Vec3 bvrEye = mc.player.getEyePosition();
         Vec3 bvrLook = mc.player.getViewVector(1.0F).normalize();
         Vec3 bvrRight = bvrLook.cross(new Vec3(0, 1, 0));
@@ -740,12 +742,18 @@ public final class RadarHudRenderer {
         Entity target = RadarHud.lockedEntity;
         if (target == null && RadarHud.bvrLockedUuid == null) return;
 
-        // ACQ PD 尝试锁定：四角闪烁框，固定在发起时的扫描点，即使当前选中的是 IR 弹也显示。
-        // BVR 远程截获阶段没有本地实体位置，不画额外框，仅靠 ACQ PD 模式字样提示。
-        if (RadarHud.lockAcquiring) {
-            if (target == null) return;
+        // ACQ PD 尝试锁定：四角闪烁框，本地锚定发起时的扫描点；
+        // BVR 远程截获同样绘制，锚定被波束扫到的涂抹位置。即使当前选中的是 IR 弹也显示。
+        if (RadarHud.lockAcquiring || RadarHud.bvrAcquiring) {
             Vec3 anchor = RadarHud.lockAnchorPosition;
-            if (anchor == null || anchor.lengthSqr() < 1.0E-6) {
+            if (RadarHud.bvrAcquiring && (anchor == null || anchor.lengthSqr() < 1.0E-6)) {
+                BvrTrack acquiring = RadarHud.bvrLockedUuid == null ? null
+                        : BvrState.get(RadarHud.bvrLockedUuid);
+                if (acquiring == null) return;
+                anchor = BvrState.lagCompensatedPosition(acquiring);
+            } else if (RadarHud.lockAcquiring && (anchor == null
+                    || anchor.lengthSqr() < 1.0E-6)) {
+                if (target == null) return;
                 anchor = target.getBoundingBox().getCenter();
             }
             float[] ap = worldToScreen(anchor, mc.player, screenW, screenH);
@@ -765,7 +773,6 @@ public final class RadarHudRenderer {
 
         // BVR 远程 TRK：与本地锁定完全相同的绿色框样式，数据来自 BVR 数据链航迹。
         if (target == null) {
-            if (RadarHud.bvrAcquiring) return;
             BvrTrack bvrTarget = RadarHud.bvrLockedUuid == null ? null
                     : BvrState.get(RadarHud.bvrLockedUuid);
             if (bvrTarget == null) return;
@@ -1260,14 +1267,32 @@ public final class RadarHudRenderer {
     }
 
     private static void drawStrobe(GuiGraphics g, int px, int py, int size) {
-        if (RadarHud.lockedEntity == null) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        RadarEcho echo = RadarHud.echoes.get(RadarHud.lockedEntity.getUUID());
-        if (echo == null || echo.expired(mc.player.tickCount)) return;
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
-        double dist = echo.range;
-        double az = echo.azimuthDeg;
+        double dist;
+        double az;
+        if (RadarHud.lockedEntity != null) {
+            RadarEcho echo = RadarHud.echoes.get(RadarHud.lockedEntity.getUUID());
+            if (echo == null || echo.expired(mc.player.tickCount)) return;
+            dist = echo.range;
+            az = echo.azimuthDeg;
+        } else if (RadarHud.bvrLockedUuid != null) {
+            // BVR 远程锁定同样给面板白光条，作用与本地 TRK 一致。
+            BvrTrack bvrTarget = BvrState.get(RadarHud.bvrLockedUuid);
+            if (bvrTarget == null) return;
+            Vec3 pos = BvrState.lagCompensatedPosition(bvrTarget);
+            Vec3 eye = mc.player.getEyePosition();
+            Vec3 to = pos.subtract(eye);
+            dist = to.length();
+            Vec3 look = mc.player.getViewVector(1.0F).normalize();
+            Vec3 right = look.cross(new Vec3(0, 1, 0));
+            if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
+            right = right.normalize();
+            az = Math.toDegrees(Math.atan2(to.dot(right), to.dot(look)));
+        } else {
+            return;
+        }
         int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2.0));
         int by = py + size - (int) (dist / range * size);
         g.fill(bx - 4, by, bx + 5, by + 1, WHITE);

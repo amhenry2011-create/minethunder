@@ -854,6 +854,12 @@ public final class RadarHudClientTicker {
         }
         clearLockState();
         TwsTrackManager.clear();
+        // ACM 是纯视距内自动截获：断开远程数据链软锁并丢弃涂抹记忆。
+        if (RadarHud.bvrLockedUuid != null) {
+            cancelBvrLock("ACM 截断远程锁定");
+            Network.sendToServer(new BvrLockPacket((java.util.UUID) null));
+        }
+        BvrState.clearPaints();
         RadarHud.acmReturnMode = returnMode;
         RadarHud.acmActive = true;
         RadarHud.currentMode = RadarMode.ACM;
@@ -979,19 +985,33 @@ public final class RadarHudClientTicker {
      */
     private static boolean beginBvrLockAcquisition() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || !RadarHud.radarOn) return false;
+        if (mc.player == null) return false;
+        if (!RadarHud.radarOn) {
+            RadarHud.lastLockMessage = "雷达未开启";
+            return false;
+        }
+        if (RadarHud.acmActive || RadarHud.currentMode == RadarMode.ACM) {
+            // ACM 是纯近距自动截获，不提供远程锁定。
+            RadarHud.lastLockMessage = "无有效回波";
+            return false;
+        }
         if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH) {
             RadarHud.lastLockMessage = "远程锁定仅 ARH：请切换弹种";
             return false;
         }
         Vec3 eye = mc.player.getEyePosition();
         Vec3 look = mc.player.getViewVector(1.0F).normalize();
+        // 与本地手动锁定同款新鲜度：只认本扫描周期内被波束扫中的涂抹。
+        int maxPaintAge = RadarHud.scanFrameTicks() + 20;
+        int now = mc.player.tickCount;
         BvrTrack best = null;
+        BvrState.Paint bestPaint = null;
         double bestScore = Double.MAX_VALUE;
         for (BvrTrack track : BvrState.active()) {
             if (!track.kind().isAir()) continue;
             if (track.uuid().equals(mc.player.getUUID())) continue;
-            if (BvrState.painted(track.uuid()) == null) continue;
+            BvrState.Paint paint = BvrState.painted(track.uuid());
+            if (paint == null || now - paint.lastPaintTick() > maxPaintAge) continue;
             Vec3 predicted = BvrState.lagCompensatedPosition(track);
             double distance = eye.distanceTo(predicted);
             if (distance < ServerRadarState.BVR_LOCK_MIN_RANGE
@@ -1003,6 +1023,7 @@ public final class RadarHudClientTicker {
             if (score < bestScore) {
                 bestScore = score;
                 best = track;
+                bestPaint = paint;
             }
         }
         if (best == null) {
@@ -1013,6 +1034,8 @@ public final class RadarHudClientTicker {
         RadarHud.bvrAcquireTicks = 0;
         RadarHud.bvrLockedUuid = best.uuid();
         RadarHud.bvrLockedName = best.name();
+        // ACQ 阶段四角框锚定在被扫到的涂抹位置，与本地 ACQ 视觉一致。
+        RadarHud.lockAnchorPosition = bestPaint.position();
         updateBvrInfo(mc.player, best);
         RadarHud.lastLockMessage = "ACQ PD 远程尝试锁定";
         return true;
@@ -1189,8 +1212,7 @@ public final class RadarHudClientTicker {
         RadarHud.lockAnchorPosition = Vec3.ZERO;
     }
 
-    /** 只清理锁定相关状态，不恢复模式；供 ACM 进出使用。 */
-    /** 切换模式时清空上一模式的面板接触、选中目标等旧绘制。 */
+    /** 当前扫描线/面板接触按模式切换清空旧绘制。 */
     private static void clearRadarPanelForModeChange(boolean keepLockedTarget) {
         RadarHud.contacts.clear();
         RadarHud.contactPaintTicks.clear();
@@ -1213,6 +1235,7 @@ public final class RadarHudClientTicker {
         RadarHud.lastLockMessage = "模式切换解除锁定";
     }
 
+    /** 只清理锁定相关状态，不恢复模式；供 ACM 进出使用。 */
     private static void clearLockState() {
         Entity target = RadarHud.lockedEntity;
         if (target != null) RadarHud.echoes.remove(target.getUUID());
@@ -1409,11 +1432,15 @@ public final class RadarHudClientTicker {
     /**
      * BVR 远程航迹按普通雷达规则显示：只有当前扫描波束实际扫过其方位/仰角时
      * 建立/刷新涂抹快照；未扫到时面板保持冻结位置，超过回波记忆后消失。
+     * ACM 只做视距内自动截获，不做超视距搜索（ACM 内不涂抹 BVR）。
      * 已锁定的 BVR 目标与本机导弹数据链例外，保持连续更新（同 TRK PD 规则）。
      */
     private static void updateBvrPaints(Minecraft mc, Player player,
                                         Vec3 origin, int nowTick) {
-        if (RadarHud.currentMode == RadarMode.STT) return;
+        if (RadarHud.currentMode == RadarMode.STT
+                || RadarHud.currentMode == RadarMode.ACM) {
+            return;
+        }
         ScanWindow window;
         Vec3 beamDir;
         if (RadarHud.currentMode == RadarMode.ACM
