@@ -13,16 +13,20 @@ import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
  * 服务端区块 ticket：
  * - 导弹实体保持 5×5 实体 ticking 区块，飞出玩家加载范围后仍持续 tick，不再悬停卡空。
  * - 带 {@code minethunder_bvr} 标签的远程目标保持加载，作为 BVR 数据链航迹源。
+ * - 显式登记的目标（{@link #registerManualTarget}）按 UUID 直接续票，不依赖实体枚举结果。
  *
  * Ticket 使用 {@link TicketType#FORCED}、distance=2、forceTicks=true：
  * ticketLevel = 33 - 2 = 31，即 ENTITY_TICKING。
@@ -38,10 +42,44 @@ public final class BvrTicketService {
     private static final int MAX_TICKETS = 64;
 
     private static final int SWEEP_TICKS = 5;
+    /** 连续多少个 sweep 找不到实体后才撤票/除名（5 tick × 10 = 2.5 s）。 */
+    private static final int STALE_SWEEPS = 10;
 
     private record Entry(ServerLevel level, ChunkPos center) {}
     /** entity UUID -> 当前 ticket */
     private static final Map<UUID, Entry> TICKETS = new HashMap<>();
+    /** 显式登记的目标 UUID -> 连续未找到次数。 */
+    private static final Map<UUID, Integer> MANUAL = new HashMap<>();
+    /** 已持票实体连续未枚举到的次数；用于容忍偶发枚举失败。 */
+    private static final Map<UUID, Integer> TICKET_MISSES = new HashMap<>();
+
+    /** 生成测试目标时登记，保证之后即使实体枚举遗漏也不会撤票丢目标。 */
+    public static void registerManualTarget(Entity entity) {
+        if (entity == null) return;
+        MANUAL.put(entity.getUUID(), 0);
+    }
+
+    public static int ticketCount() {
+        return TICKETS.size();
+    }
+
+    public static int manualCount() {
+        return MANUAL.size();
+    }
+
+    public static Set<UUID> manualTargets() {
+        return new HashSet<>(MANUAL.keySet());
+    }
+
+    /** 跨维度按 UUID 解析实体；供注册表保活与 BVR 采集兜底使用。 */
+    @Nullable
+    public static Entity findTrackedEntity(MinecraftServer server, UUID uuid) {
+        for (ServerLevel level : server.getAllLevels()) {
+            Entity entity = level.getEntity(uuid);
+            if (entity != null) return entity;
+        }
+        return null;
+    }
 
     private static boolean isTrackable(Entity entity) {
         return entity instanceof MissileArrow || entity.getTags().contains(BVR_TAG);
@@ -54,37 +92,64 @@ public final class BvrTicketService {
 
         List<Entity> candidates = new ArrayList<>();
         List<Entity> missiles = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity entity : level.getAllEntities()) {
                 if (!entity.isAlive() || !isTrackable(entity)) continue;
+                seen.add(entity.getUUID());
                 (entity instanceof MissileArrow ? missiles : candidates).add(entity);
             }
         }
 
-        List<Entity> seen = new ArrayList<>();
-        seen.addAll(candidates);
-        seen.addAll(missiles);
-        List<UUID> stale = new ArrayList<>();
-        for (UUID uuid : TICKETS.keySet()) {
-            boolean alive = false;
-            for (Entity entity : seen) {
-                if (entity.getUUID().equals(uuid)) {
-                    alive = true;
-                    break;
+        // 显式登记的目标：按 UUID 直接解析，避免远区块枚举遗漏导致丢目标。
+        for (UUID uuid : new ArrayList<>(MANUAL.keySet())) {
+            if (seen.contains(uuid)) {
+                MANUAL.put(uuid, 0);
+                continue;
+            }
+            Entity entity = findTrackedEntity(server, uuid);
+            if (entity != null && entity.isAlive()) {
+                seen.add(uuid);
+                (entity instanceof MissileArrow ? missiles : candidates).add(entity);
+                MANUAL.put(uuid, 0);
+            } else {
+                int misses = MANUAL.getOrDefault(uuid, 0) + 1;
+                if (misses >= STALE_SWEEPS) {
+                    MANUAL.remove(uuid);
+                } else {
+                    MANUAL.put(uuid, misses);
                 }
             }
-            if (!alive) stale.add(uuid);
-        }
-        for (UUID uuid : stale) {
-            removeTicket(uuid);
         }
 
+        List<Entity> tracked = new ArrayList<>();
+        tracked.addAll(missiles);
+        tracked.addAll(candidates);
         int i = 0;
-        for (Entity missile : missiles) {
-            ensure(missile, i++);
+        for (Entity entity : tracked) {
+            if (i >= MAX_TICKETS) break;
+            ensure(entity, i++);
         }
-        for (Entity target : candidates) {
-            ensure(target, i++);
+
+        // 已持票但本轮未枚举到的实体：先按 UUID 兜底解析，连续 STALE_SWEEPS 次失败才撤票。
+        for (UUID uuid : new ArrayList<>(TICKETS.keySet())) {
+            if (seen.contains(uuid)) {
+                TICKET_MISSES.remove(uuid);
+                continue;
+            }
+            Entity entity = findTrackedEntity(server, uuid);
+            if (entity != null && entity.isAlive() && isTrackable(entity)) {
+                ensure(entity, 0);
+                TICKET_MISSES.remove(uuid);
+                continue;
+            }
+            int misses = TICKET_MISSES.getOrDefault(uuid, 0) + 1;
+            if (misses >= STALE_SWEEPS) {
+                removeTicket(uuid);
+                TICKET_MISSES.remove(uuid);
+            } else {
+                TICKET_MISSES.put(uuid, misses);
+            }
         }
 
         if (TICKETS.size() > MAX_TICKETS) {
@@ -114,6 +179,7 @@ public final class BvrTicketService {
     public static void removeTicket(UUID uuid) {
         Entry entry = TICKETS.remove(uuid);
         if (entry != null) removeTicketAt(entry);
+        TICKET_MISSES.remove(uuid);
     }
 
     private static void removeTicketAt(Entry entry) {
@@ -126,10 +192,12 @@ public final class BvrTicketService {
         for (UUID uuid : new ArrayList<>(TICKETS.keySet())) {
             removeTicket(uuid);
         }
+        MANUAL.clear();
     }
 
     @SubscribeEvent
     public static void onEntityLeave(EntityLeaveLevelEvent event) {
         removeTicket(event.getEntity().getUUID());
+        MANUAL.remove(event.getEntity().getUUID());
     }
 }

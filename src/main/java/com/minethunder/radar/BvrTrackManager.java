@@ -6,6 +6,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.FlyingMob;
+import net.minecraft.world.entity.animal.Parrot;
+import net.minecraft.world.entity.monster.Vex;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -13,7 +16,9 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -52,8 +57,10 @@ public final class BvrTrackManager {
 
     private static List<BvrTrack> collect(MinecraftServer server) {
         List<BvrTrack> tracks = new ArrayList<>();
+        Set<UUID> collected = new HashSet<>();
         for (ServerLevel level : server.getAllLevels()) {
             for (ServerPlayer player : level.players()) {
+                collected.add(player.getUUID());
                 tracks.add(new BvrTrack(player.getUUID(), BvrKind.PLAYER,
                         player.getUUID(), player.getGameProfile().getName(),
                         player.getBoundingBox().getCenter(), player.getDeltaMovement(),
@@ -63,11 +70,13 @@ public final class BvrTrackManager {
                 UUID uuid = entity.getUUID();
                 if (entity instanceof net.minecraft.world.entity.player.Player) continue;
                 if (entity.getTags().contains(BvrTicketService.BVR_TAG)) {
+                    collected.add(uuid);
                     tracks.add(new BvrTrack(uuid, classify(entity),
                             null, nameOf(entity),
                             entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
                             entity.getId()));
                 } else if (entity instanceof com.minethunder.missile.MissileArrow missile) {
+                    collected.add(uuid);
                     Entity owner = missile.getOwner();
                     tracks.add(new BvrTrack(uuid, BvrKind.MISSILE,
                             owner == null ? null : owner.getUUID(),
@@ -78,10 +87,38 @@ public final class BvrTrackManager {
                 if (tracks.size() >= MAX_TRACKS * 2) return tracks;
             }
         }
+        // 显式登记的目标（test bvr）按 UUID 并集补齐，避免枚举遗漏导致航迹丢失。
+        for (UUID uuid : BvrTicketService.manualTargets()) {
+            if (collected.contains(uuid)) continue;
+            Entity entity = BvrTicketService.findTrackedEntity(server, uuid);
+            if (entity == null || !entity.isAlive()
+                    || entity instanceof net.minecraft.world.entity.player.Player) continue;
+            if (entity instanceof com.minethunder.missile.MissileArrow missile) {
+                Entity owner = missile.getOwner();
+                tracks.add(new BvrTrack(uuid, BvrKind.MISSILE,
+                        owner == null ? null : owner.getUUID(),
+                        "MSL",
+                        entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
+                        entity.getId()));
+            } else {
+                tracks.add(new BvrTrack(uuid, classify(entity),
+                        null, nameOf(entity),
+                        entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
+                        entity.getId()));
+            }
+            collected.add(uuid);
+            if (tracks.size() >= MAX_TRACKS * 2) break;
+        }
         return tracks;
     }
 
     private static BvrKind classify(Entity entity) {
+        // 飞行生物直接按空中目标处理，避免低空悬停时支撑扫描误判为地面。
+        if (entity instanceof FlyingMob
+                || entity instanceof Vex
+                || entity instanceof Parrot) {
+            return BvrKind.AI;
+        }
         var targetClass = RadarCore.classify(entity);
         return targetClass == RadarTargetClass.AIR ? BvrKind.AI : BvrKind.SURFACE;
     }
@@ -107,6 +144,24 @@ public final class BvrTrackManager {
             visible = new ArrayList<>(visible.subList(0, MAX_TRACKS));
         }
         return visible;
+    }
+
+    /** `/minethunder test bvr status`：打印整条 BVR 发布链路的服务端计数。 */
+    public static String status(MinecraftServer server, ServerPlayer viewer) {
+        int tagged = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity entity : level.getAllEntities()) {
+                if (entity.getTags().contains(BvrTicketService.BVR_TAG)) tagged++;
+            }
+        }
+        List<BvrTrack> tracks = collect(server);
+        List<BvrTrack> visible = filter(viewer, tracks);
+        return "BVR状态：枚举标签靶=" + tagged
+                + " 注册表=" + BvrTicketService.manualCount()
+                + " ticket=" + BvrTicketService.ticketCount()
+                + " 快照=" + tracks.size()
+                + " 可见=" + visible.size()
+                + " 雷达=" + (ServerRadarState.isRadarOn(viewer) ? "开" : "关");
     }
 
     /** 供导弹中段数据链按 UUID 解析目标实体。 */

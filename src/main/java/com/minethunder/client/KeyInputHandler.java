@@ -236,7 +236,13 @@ public final class KeyInputHandler {
             return;
         }
         if (RadarHud.isAcmContext()) {
-            notifyClient(mc, Component.literal("ACM 扫描宽度固定 ±3°"));
+            RadarHud.acmBeamIndex = (RadarHud.acmBeamIndex + 1) % 3;
+            String label = switch (RadarHud.acmBeamIndex) {
+                case RadarHud.ACM_BEAM_VERTICAL -> "上下往复";
+                case RadarHud.ACM_BEAM_RASTER -> "3×3 光栅";
+                default -> "正前静止";
+            };
+            notifyClient(mc, Component.literal("ACM 波束：" + label));
             return;
         }
         RadarHud.scanPatternIndex = (RadarHud.scanPatternIndex + 1)
@@ -260,7 +266,7 @@ public final class KeyInputHandler {
         notifyClient(mc, Component.literal(
                 "Alt+B 模式 · Alt+R 雷达 · 右Shift 回中 · 方向键扫描 · Alt+F 锁定 · Alt+T 选目标 · X 解锁"));
         notifyClient(mc, Component.literal(
-                "Alt+Q 距离 · Alt+D 扫描宽 · Alt+W ACM · Alt+X 雷达导引头 · 满弓红外 · Alt+E 干扰弹 · C 弹种 · Enter 挂架"));
+                "Alt+Q 距离 · Alt+D 扫描宽/ACM 波束 · Alt+W ACM · Alt+X 雷达导引头 · 满弓红外 · Alt+E 干扰弹 · C 弹种 · Enter 挂架"));
     }
 
     @SubscribeEvent

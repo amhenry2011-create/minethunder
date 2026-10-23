@@ -186,14 +186,26 @@ public final class RadarHudClientTicker {
             contactOffsetAz = 0.0;
             contactOffsetEl = 0.0;
         } else if (RadarHud.currentMode == RadarMode.ACM) {
-            // ACM 是格斗模式：保留每 tick 全 ACM 框扫描，保证自动截获速度。
-            Vec3 look = scanDirection(player);
-            rawContacts = RadarCore.scan(mc.level, origin, look, RadarHud.currentMode,
-                    RadarHud.effectiveRange(), Math.toRadians(RadarHud.effectiveScanHalfDeg()),
-                    Math.toRadians(RadarHud.effectiveScanElevationHalfDeg()),
-                    player.getDeltaMovement(), player);
-            contactOffsetAz = RadarHud.scanAzimuthOffsetDeg;
-            contactOffsetEl = RadarHud.scanElevationOffsetDeg;
+            // ACM 三波束模式：0=正前静止整框扫描；1/2=按当前波束窄窗扫描。
+            if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_FIXED) {
+                Vec3 look = scanDirection(player);
+                rawContacts = RadarCore.scan(mc.level, origin, look, RadarHud.currentMode,
+                        RadarHud.effectiveRange(), Math.toRadians(RadarHud.effectiveScanHalfDeg()),
+                        Math.toRadians(RadarHud.effectiveScanElevationHalfDeg()),
+                        player.getDeltaMovement(), player);
+                contactOffsetAz = RadarHud.scanAzimuthOffsetDeg;
+                contactOffsetEl = RadarHud.scanElevationOffsetDeg;
+            } else {
+                ScanWindow window = acmScanWindow();
+                Vec3 beamDir = Vec3.directionFromRotation(
+                        player.getXRot() - (float) window.elCenterDeg(),
+                        player.getYRot() + (float) window.azCenterDeg()).normalize();
+                rawContacts = RadarCore.scanBeam(mc.level, origin, beamDir, RadarHud.currentMode,
+                        RadarHud.effectiveRange(), Math.toRadians(window.azHalfDeg()),
+                        Math.toRadians(window.elHalfDeg()), player.getDeltaMovement(), player);
+                contactOffsetAz = window.azCenterDeg();
+                contactOffsetEl = window.elCenterDeg();
+            }
         } else {
             ScanWindow window = currentScanWindow();
             Vec3 beamDir = Vec3.directionFromRotation(
@@ -278,7 +290,8 @@ public final class RadarHudClientTicker {
                 if (c.distance > RadarHud.effectiveRange()
                         || Math.abs(c.azimuthDeg - RadarHud.scanAzimuthOffsetDeg)
                         > RadarHud.effectiveScanHalfDeg()
-                        || Math.abs(c.elevationDeg - RadarHud.scanElevationOffsetDeg) > 10.0) continue;
+                        || Math.abs(c.elevationDeg - RadarHud.scanElevationOffsetDeg)
+                        > Math.max(10.0, RadarHud.effectiveScanElevationHalfDeg())) continue;
                 if (c.distance < bestDist) {
                     bestDist = c.distance;
                     best = c;
@@ -1358,9 +1371,13 @@ public final class RadarHudClientTicker {
             RadarHud.scanStartTick = player.tickCount;
         }
         int ticks = player.tickCount - RadarHud.scanStartTick;
-        int rows = RadarHud.effectiveScanRows();
         // 每行扫一遍后切换下一行；行数由扫描模式决定，行间方向交替。
         int period = RadarHud.isAcmContext() ? 5 : RadarHud.SCAN_ROW_TICKS;
+        if (RadarHud.currentMode == RadarMode.ACM) {
+            updateAcmBeamState(ticks, period);
+            return;
+        }
+        int rows = RadarHud.effectiveScanRows();
         int step = ticks / period;
         int cycle = rows * 2 - 2;
         int p = step % cycle;
@@ -1380,6 +1397,59 @@ public final class RadarHudClientTicker {
         RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
                 + elevationHalf
                 - (row + 0.5) * elevationSpan / rows);
+    }
+
+    /**
+     * ACM 三波束模式：
+     * 0 正前静止：波束钉死在机头方向；
+     * 1 上下往复：波束沿 ±60° 俯仰带逐行扫（方位固定 0°）；
+     * 2 3×3 光栅：波束在 ±9° 网格内按普通搜索逻辑逐行来回。
+     */
+    private static void updateAcmBeamState(int ticks, int period) {
+        lastSweepAzimuth = RadarHud.sweepAzimuthDeg;
+        lastSweepRow = scanRow;
+        RadarHud.prevSweepAzimuthDeg = RadarHud.sweepAzimuthDeg;
+        RadarHud.prevSweepElevationDeg = RadarHud.sweepElevationDeg;
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_FIXED) {
+            scanRow = 0;
+            RadarHud.sweepAzimuthDeg = (float) RadarHud.scanAzimuthOffsetDeg;
+            RadarHud.sweepElevationDeg = (float) RadarHud.scanElevationOffsetDeg;
+            return;
+        }
+        int rows = Math.max(2, RadarHud.effectiveScanRows());
+        int step = ticks / Math.max(1, period);
+        int cycle = rows * 2 - 2;
+        int p = step % cycle;
+        scanRow = p < rows ? p : cycle - p;
+        boolean forward = step % 2 == 0;
+        float frac = (ticks % Math.max(1, period)) / (float) Math.max(1, period);
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_VERTICAL) {
+            double half = RadarHud.effectiveScanElevationHalfDeg();
+            RadarHud.sweepAzimuthDeg = (float) RadarHud.scanAzimuthOffsetDeg;
+            RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
+                    + half - (scanRow + 0.5) * (half * 2.0 / rows));
+        } else {
+            double half = RadarHud.effectiveScanHalfDeg();
+            RadarHud.sweepAzimuthDeg = (float) (RadarHud.scanAzimuthOffsetDeg
+                    + (forward ? -half + 2 * half * frac : half - 2 * half * frac));
+            double elHalf = RadarHud.effectiveScanElevationHalfDeg();
+            RadarHud.sweepElevationDeg = (float) (RadarHud.scanElevationOffsetDeg
+                    + elHalf - (scanRow + 0.5) * (elHalf * 2.0 / rows));
+        }
+    }
+
+    /** ACM 模式 1/2 的当前波束窗口；模式 0 直接整框扫描。 */
+    private static ScanWindow acmScanWindow() {
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_VERTICAL) {
+            double rowHalf = RadarHud.effectiveScanElevationHalfDeg()
+                    / Math.max(2, RadarHud.effectiveScanRows());
+            return new ScanWindow(RadarHud.scanAzimuthOffsetDeg,
+                    RadarHud.sweepElevationDeg,
+                    RadarHud.ACM_VERTICAL_HALF_AZ_DEG,
+                    Math.max(RadarHud.SCAN_BEAM_HALF_EL_DEG, rowHalf));
+        }
+        return new ScanWindow(RadarHud.sweepAzimuthDeg, RadarHud.sweepElevationDeg,
+                RadarHud.SCAN_BEAM_HALF_AZ_DEG, RadarHud.ACM_RASTER_CELL_HALF_DEG);
     }
 
     /**

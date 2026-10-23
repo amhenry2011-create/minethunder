@@ -51,9 +51,15 @@
 ## 测试
 
 ```
-/minethunder test bvr start   # 前方 ~600 格生成 BVR-TEST-7（区块保活）
+/minethunder test bvr start   # 前方 ~600 格生成 BVR-TEST-7（区块保活 + 手动登记）
+/minethunder test bvr status  # 打印枚举标签靶/注册表/ticket/快照/可见/雷达 计数
 /minethunder test bvr clear
 ```
+
+- 测试靶生成时登记进 `BvrTicketService` 手动注册表：sweep 按 UUID 直接续 ticket，
+  连续 10 轮（约 2.5 s）解析不到才除名撤票，不再因单次实体枚举遗漏而丢目标。
+- `BvrTrackManager.collect` 快照 = 实体枚举 ∪ 注册表目标（UUID 去重）；
+  飞行生物（幻翼等）强制 `BvrKind.AI`，不受低空支撑扫描分类影响。
 
 1. 切 ARH、开雷达、开导引头；Alt+F 锁定远端目标（模式字 ACQ PD → TRK PD）。
 2. 面板 600/1000 档出现普通样式目标（同本地回波符号）；锁定后主屏出现普通绿色锁定框 + 名称/距离/接近率。

@@ -1,9 +1,31 @@
 # MineThunder 交接 / 下次继续
 
-日期：2026-10-22
-状态：BVR 无专属 UI 化完成（面板按普通目标样式、主屏普通绿框）+ 导引头近距直开双环修正 + 朝向非理想位置进度回退。待构建实测。
+日期：2026-10-23
+状态：BVR 闪断排查修复（注册表保活 + 状态命令）+ 雪球/投射物可锁定 + ACM 三波束模式 + IR 锁太阳小环径向钳制。已构建待实测。
 
-## 2026-10-22 BVR 面板/主屏显示 + 导引头修正（最新）
+## 2026-10-23 BVR 闪断 + 投射物锁定 + ACM 三波束 + IR 环修正（最新）
+
+### 用户反馈与决议
+- "生成目标成功后 src pd 模式依然没有扫描到目标" → 进一步："生成出目标雷达有一条短横线但是一瞬间就消失了" → 判定为服务端快照在最初几拍后停止包含该靶（客户端 30 tick 过期把断源放大成闪现）。轻量确诊后修复：`BvrTicketService` 曾依赖 `getAllEntities()` 枚举做 stale 判定，一次枚举遗漏即撤票→区块落地→永久丢失。
+- "雷达似乎无法锁定雪球" → `RadarCore.classify` 对非生物/非导弹返回 null，海选 `mode.accepts(null)` 静默过滤。
+- "ACM 扫描范围与框的大小不符合" → 旧 ACM 检测是每 tick 全框扫描、框只画 ±3~6° 小角框，视觉/范围脱节。用户拍板三模式：0 正前静止、1 上下往复（旋转 `[` 端帽）、2 3×3 光栅（格=±3°、网格±9°），扫描 ±60° 俯仰极限、图标允许屏幕裁剪。
+- "红外弹锁定太阳仰头到极限，小圈会移动（飘离太阳方向）" → 旧代码对 x/y 独立钳屏，方向被扭；改为沿目标方向径向钳制（大圈内缘/屏幕边界最近点），锁定判定不变。
+
+### 本轮改动
+1. **`BvrTicketService`**：新增手动注册表（`registerManualTarget`，`test bvr start` 调用）+ `TICKET_MISSES`；每 sweep 对注册表/持票 UUID 用 `findTrackedEntity`（跨维度 `level.getEntity`）兜底续票，连续 10 次解析失败才撤票/除名；`manualCount/ticketCount/manualTargets` 供诊断。
+2. **`BvrTrackManager`**：快照 = 枚举 ∪ 注册表并集（UUID 去重）；飞行生物（`FlyingMob`/`Vex`/`Parrot`）强制 AI；新增 `status(server, viewer)`。
+3. **`SensorDebugCommand`**：`test bvr start` 登记注册表，测试靶 `setInvulnerable(true)+setPersistenceRequired()`（防白天燃烧/清除导致闪现）；新增 `test bvr status`（枚举标签靶/注册表/ticket/快照/可见/雷达）。
+4. **`RadarCore.classify`**：`Projectile → AIR`（雪球/蛋/箭/火球可被扫描、锁定、雷达弹锁定）。
+5. **ACM 三波束**：`RadarHud.acmBeamIndex`（0/1/2）+ 每模式 effective 半角/行数；`updateScanState` ACM 分支 `updateAcmBeamState`；检测模式 0 整框 ±3°、模式 1 当前行窄窗（az ±3°、el 行高）、模式 2 当前格窄窗（az ±1.5°、el ±3°）；`KeyInputHandler.cycleScanWidth` ACM 内 Alt+D 循环波束；`renderScanOverlay` ACM 分支 `drawAcmBeamOverlay`（三模式框/端帽/格线/波束，屏幕裁剪）。
+6. **IR 小环**：`renderCenterRings` IR 分支方向保持径向钳制（`min(大圈内缘, 屏幕边界/方向向量)`），不再 x/y 独立钳制。
+7. 文档：`TWS.md` ACM 段、`BVR.md` 测试段、`SEEKER_HUD.md` IR 段同步。
+
+### 待办/下次优先
+- 实测 `test bvr start` 后 600/1000 档是否持续显示；若仍闪断跑 `test bvr status`（服务端 枚举/注册表/ticket/可见/雷达 数字）发回定位。
+- 实测雪球锁定（ACQ/TRK、ACM 截获）、ACM 三模式框/波束一致性、IR 锁太阳仰极限小环贴边。
+- ACM 检测真实波束化后截获更慢（尤其模式 1/2），如嫌慢可调 `updateAcmBeamState` 的 period=5 或行宽。
+
+## 2026-10-22 BVR 面板/主屏显示 + 导引头修正（上一轮）
 
 ### 用户反馈与决议
 - "开 bvr 验证雷达界面没有目标" → 根因：客户端本地扫描拉不到 600 格实体，BVR 面板绘制在上一轮裁剪中被整删，`BvrState` 航迹同步存在但无人绘制。→ 用户的“不要多余 UI”指**不要琥珀新区视觉**，不是不要目标显示。

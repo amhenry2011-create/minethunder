@@ -77,7 +77,9 @@ public final class SensorDebugCommand {
                                 .then(Commands.literal("start")
                                         .executes(context -> spawnBvrTarget(context.getSource())))
                                 .then(Commands.literal("clear")
-                                        .executes(context -> clearBvrTargets(context.getSource()))))
+                                        .executes(context -> clearBvrTargets(context.getSource())))
+                                .then(Commands.literal("status")
+                                        .executes(context -> bvrStatus(context.getSource()))))
                         .then(Commands.literal("dodge")
                                 .requires(source -> source.hasPermission(2))
                                 .executes(context -> FullFeatureTest.dodge(context.getSource(), null))
@@ -281,14 +283,24 @@ public final class SensorDebugCommand {
         phantom.moveTo(spawnAt.x, spawnAt.y, spawnAt.z, player.getYRot(), 0);
         phantom.setNoAi(true);
         phantom.setNoGravity(true);
+        phantom.setInvulnerable(true);
+        phantom.setPersistenceRequired();
         phantom.setDeltaMovement(eye.subtract(spawnAt).normalize().scale(0.35));
         phantom.setSilent(true);
         phantom.setCustomName(net.minecraft.network.chat.Component.literal("BVR-TEST-7"));
         phantom.setCustomNameVisible(true);
         phantom.addTag(com.minethunder.radar.BvrTicketService.BVR_TAG);
         level.addFreshEntity(phantom);
+        com.minethunder.radar.BvrTicketService.registerManualTarget(phantom);
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
                 "已生成 BVR 测试目标 BVR-TEST-7（" + (int) distance + " 格，区块保活已开启）"), false);
+        return 1;
+    }
+
+    private static int bvrStatus(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) return 0;
+        String status = com.minethunder.radar.BvrTrackManager.status(player.server, player);
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(status), false);
         return 1;
     }
 

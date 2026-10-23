@@ -4,6 +4,7 @@ import com.minethunder.missile.MissileArrow;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Marker;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -169,6 +170,10 @@ public final class RadarCore {
             return RadarBlockTargets.targetClass(marker);
         }
         if (entity instanceof MissileArrow) {
+            return RadarTargetClass.AIR;
+        }
+        // 投射物（雪球/蛋/箭/火球等）作为空中目标，便于雷达锁定与导引头测试。
+        if (entity instanceof Projectile) {
             return RadarTargetClass.AIR;
         }
         if (entity instanceof Boat boat) {

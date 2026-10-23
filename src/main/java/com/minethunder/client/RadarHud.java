@@ -70,6 +70,19 @@ public final class RadarHud {
     public static double acmRange = 100;
     public static double acmScanHalfDeg = 6;
 
+    /** ACM 波束模式：0=正前静止（小框），1=上下往复（竖带），2=3×3 光栅。 */
+    public static final int ACM_BEAM_FIXED = 0;
+    public static final int ACM_BEAM_VERTICAL = 1;
+    public static final int ACM_BEAM_RASTER = 2;
+    public static int acmBeamIndex = ACM_BEAM_FIXED;
+    /** 模式 0 的固定波束半角（沿用历史 ±3° 固定框）。 */
+    public static final double ACM_FIXED_HALF_DEG = 3.0;
+    /** 模式 1 竖带的方位半宽。 */
+    public static final double ACM_VERTICAL_HALF_AZ_DEG = 3.0;
+    /** 模式 2 单格半角（格边长 6°，网格 ±9°）。 */
+    public static final double ACM_RASTER_CELL_HALF_DEG = 3.0;
+    public static final int ACM_RASTER_ROWS = 3;
+
     /** ACM 自动截获后虽然切到 STT，仍保持 ACM 的近距离参数。 */
     public static boolean isAcmContext() {
         return acmActive && (currentMode == RadarMode.ACM || currentMode == RadarMode.STT);
@@ -79,21 +92,41 @@ public final class RadarHud {
         return SCAN_PATTERNS[Math.floorMod(scanPatternIndex, SCAN_PATTERNS.length)];
     }
 
-    /** TRK PD 使用 ±120° 跟踪门限；ACM 固定；其他模式使用当前搜索档位。 */
+    /** TRK PD 使用 ±120° 跟踪门限；ACM 按波束模式；其他模式使用当前搜索档位。 */
     public static double effectiveScanHalfDeg() {
         if (currentMode == RadarMode.STT) return PANEL_AZIMUTH_DEG;
-        if (currentMode == RadarMode.ACM) return acmScanHalfDeg;
+        if (currentMode == RadarMode.ACM) {
+            return switch (acmBeamIndex) {
+                case ACM_BEAM_VERTICAL -> ACM_VERTICAL_HALF_AZ_DEG;
+                case ACM_BEAM_RASTER -> ACM_RASTER_CELL_HALF_DEG * ACM_RASTER_ROWS;
+                default -> ACM_FIXED_HALF_DEG;
+            };
+        }
         return scanPattern().halfAzimuthDeg();
     }
 
     public static double effectiveScanElevationHalfDeg() {
-        return currentMode == RadarMode.STT || currentMode == RadarMode.ACM
-                ? SCAN_ELEVATION_HALF_DEG : scanPattern().halfElevationDeg();
+        if (currentMode == RadarMode.STT) return SCAN_ELEVATION_HALF_DEG;
+        if (currentMode == RadarMode.ACM) {
+            return switch (acmBeamIndex) {
+                case ACM_BEAM_VERTICAL -> SCAN_ELEVATION_HALF_DEG;
+                case ACM_BEAM_RASTER -> ACM_RASTER_CELL_HALF_DEG * ACM_RASTER_ROWS;
+                default -> ACM_FIXED_HALF_DEG;
+            };
+        }
+        return scanPattern().halfElevationDeg();
     }
 
     public static int effectiveScanRows() {
-        return currentMode == RadarMode.STT || currentMode == RadarMode.ACM
-                ? SCAN_ELEVATION_ROWS : scanPattern().rows();
+        if (currentMode == RadarMode.STT) return SCAN_ELEVATION_ROWS;
+        if (currentMode == RadarMode.ACM) {
+            return switch (acmBeamIndex) {
+                case ACM_BEAM_VERTICAL -> SCAN_ELEVATION_ROWS;
+                case ACM_BEAM_RASTER -> ACM_RASTER_ROWS;
+                default -> 1;
+            };
+        }
+        return scanPattern().rows();
     }
 
     /** 一整帧（含上下往复）所需 tick；用于判断回波是否仍在当前扫描周期内。 */

@@ -648,10 +648,27 @@ public final class RadarHudRenderer {
             drawRadarLockLayer(g, mc, screenW, screenH, ui);
         } else if (irFlashOn) {
             // 红外弹：锁定后小圈随目标移动，未锁定时保持在屏幕中央。
-            int sx = RadarHud.irAimInitialized ? Math.round(RadarHud.irAimX) : cx;
-            int sy = RadarHud.irAimInitialized ? Math.round(RadarHud.irAimY) : cy;
-            sx = Math.max(innerR + 4, Math.min(screenW - innerR - 4, sx));
-            sy = Math.max(innerR + 4, Math.min(screenH - innerR - 4, sy));
+            // 超出可视范围时沿目标方向径向钳制（不再按横/纵轴独立钳制），避免环滑离太阳方向。
+            double aimX = RadarHud.irAimInitialized ? RadarHud.irAimX : cx;
+            double aimY = RadarHud.irAimInitialized ? RadarHud.irAimY : cy;
+            double dx = aimX - cx;
+            double dy = aimY - cy;
+            double dist = Math.hypot(dx, dy);
+            int sx = (int) Math.round(aimX);
+            int sy = (int) Math.round(aimY);
+            double limit = Math.max(0.0, outerR - innerR);
+            double availW = Math.max(0.0, screenW / 2.0 - innerR - 4);
+            double availH = Math.max(0.0, screenH / 2.0 - innerR - 4);
+            if (dist > 1.0E-6) {
+                double dirX = dx / dist;
+                double dirY = dy / dist;
+                if (Math.abs(dirX) > 1.0E-6) limit = Math.min(limit, availW / Math.abs(dirX));
+                if (Math.abs(dirY) > 1.0E-6) limit = Math.min(limit, availH / Math.abs(dirY));
+                if (dist > limit) {
+                    sx = (int) Math.round(cx + dirX * limit);
+                    sy = (int) Math.round(cy + dirY * limit);
+                }
+            }
             int innerColor = RadarHud.irLocked ? RED : WHITE;
             drawRing(g, sx, sy, innerR, Math.max(2, Math.round(2 * ui)), innerColor);
         }
@@ -888,23 +905,8 @@ public final class RadarHudRenderer {
         }
         float ui = HudScale.factor(w, h);
         if (RadarHud.currentMode == RadarMode.ACM) {
-            if (RadarHud.lockedEntity == null) {
-                // 按实际屏幕 FOV 绘制 ACM ±3° 小框，不再用随距离放大的 200px 大框。
-                double fovY = Math.toRadians(Math.max(30, mc.options.fov().get()));
-                double tanHalf = Math.tan(fovY / 2);
-                double aspect = (double) w / h;
-                double scanHalf = Math.toRadians(RadarHud.effectiveScanHalfDeg());
-                int halfW = (int) Math.round(Math.tan(scanHalf) / (tanHalf * aspect) * w / 2.0);
-                int halfH = (int) Math.round(Math.tan(scanHalf) / tanHalf * h / 2.0);
-                int acmHalf = Math.max(24, Math.max(halfW, halfH));
-                acmHalf = Math.min(acmHalf, Math.min(w, h) / 4);
-                int acmX = w / 2;
-                int acmY = h / 2;
-                float pulse = 0.45f + 0.55f * (0.5f + 0.5f * (float) Math.sin(mc.player.tickCount * 0.35));
-                drawCornerBox(g, acmX, acmY, acmHalf,
-                        Math.max(6, Math.round(8 * ui)), GREEN, pulse);
-                g.drawString(mc.font, "ACM " + (int) RadarHud.effectiveRange() + " b", acmX - acmHalf,
-                        acmY - acmHalf - 14, GREEN, false);
+            if (RadarHud.lockedEntity == null && mc.player != null) {
+                drawAcmBeamOverlay(g, mc, w, h, ui);
             }
             return;
         }
@@ -1330,16 +1332,98 @@ public final class RadarHudRenderer {
     }
 
     private static void drawCornerBox(GuiGraphics g, int cx, int cy, int r, int len, int color, float alpha) {
-        int a = (int) (alpha * 255) << 24;
-        int col = (a & 0xFF000000) | (color & 0x00FFFFFF);
-        g.fill(cx - r, cy - r, cx - r + len, cy - r + 1, col);
-        g.fill(cx - r, cy - r, cx - r + 1, cy - r + len, col);
-        g.fill(cx + r - len, cy - r, cx + r, cy - r + 1, col);
-        g.fill(cx + r - 1, cy - r, cx + r, cy - r + len, col);
-        g.fill(cx - r, cy + r - 1, cx - r + len, cy + r, col);
-        g.fill(cx - r, cy + r - len, cx - r + 1, cy + r, col);
-        g.fill(cx + r - len, cy + r - 1, cx + r, cy + r, col);
-        g.fill(cx + r - 1, cy + r - len, cx + r, cy + r, col);
+        drawCornerBoxRect(g, cx, cy, r, r, len, color, alpha);
+    }
+
+    /** 宽高独立的四角框。 */
+    private static void drawCornerBoxRect(GuiGraphics g, int cx, int cy, int hw, int hh,
+                                          int len, int color, float alpha) {
+        int col = ((int) (alpha * 255) << 24) | (color & 0x00FFFFFF);
+        g.fill(cx - hw, cy - hh, cx - hw + len, cy - hh + 1, col);
+        g.fill(cx - hw, cy - hh, cx - hw + 1, cy - hh + len, col);
+        g.fill(cx + hw - len, cy - hh, cx + hw, cy - hh + 1, col);
+        g.fill(cx + hw - 1, cy - hh, cx + hw, cy - hh + len, col);
+        g.fill(cx - hw, cy + hh - 1, cx - hw + len, cy + hh, col);
+        g.fill(cx - hw, cy + hh - len, cx - hw + 1, cy + hh, col);
+        g.fill(cx + hw - len, cy + hh - 1, cx + hw, cy + hh, col);
+        g.fill(cx + hw - 1, cy + hh - len, cx + hw, cy + hh, col);
+    }
+
+    /**
+     * ACM 三波束模式的框与波束绘制：
+     * 0 正前静止（小角框 + 中央短横线）；1 上下往复（±60° 竖带 + 旋转 [ 端帽）；
+     * 2 3×3 光栅（±9° 网格 + 逐行扫掠短横线）。超出屏幕的部分按屏幕裁剪。
+     */
+    private static void drawAcmBeamOverlay(GuiGraphics g, Minecraft mc, int w, int h, float ui) {
+        int cx = w / 2;
+        int cy = h / 2;
+        float pulse = 0.45f + 0.55f * (0.5f + 0.5f * (float) Math.sin(mc.player.tickCount * 0.35));
+        int col = ((int) (pulse * 255) << 24) | (GREEN & 0x00FFFFFF);
+        String label = "ACM " + (int) RadarHud.effectiveRange() + " b";
+        int beamLen = Math.max(12, Math.round(20 * ui));
+
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_VERTICAL) {
+            int halfWpx = Math.max(10, Math.abs(azToScreenX(RadarHud.ACM_VERTICAL_HALF_AZ_DEG, w, h) - cx));
+            int yA = elToScreenY(RadarHud.SCAN_ELEVATION_HALF_DEG, w, h);
+            int yB = elToScreenY(-RadarHud.SCAN_ELEVATION_HALF_DEG, w, h);
+            int top = Math.min(yA, yB);
+            int bot = Math.max(yA, yB);
+            int x0 = cx - halfWpx;
+            int x1 = cx + halfWpx;
+            int lineTop = Math.max(0, top);
+            int lineBot = Math.min(h, bot);
+            if (lineBot > lineTop) {
+                g.fill(x0, lineTop, x0 + 1, lineBot, col);
+                g.fill(x1 - 1, lineTop, x1, lineBot, col);
+            }
+            drawRotatedBracket(g, x0, x1, top, Math.max(8, Math.round(10 * ui)), true, col);
+            drawRotatedBracket(g, x0, x1, bot, Math.max(8, Math.round(10 * ui)), false, col);
+            int hy = Math.max(0, Math.min(h - 1, elToScreenY(RadarHud.sweepElevationDeg, w, h)));
+            g.fill(cx - beamLen, hy, cx + beamLen, hy + 1, col);
+            g.drawString(mc.font, label, Math.max(4, x0),
+                    Math.max(4, Math.min(h - 12, lineTop - 12)), GREEN, false);
+            return;
+        }
+
+        double half = RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_RASTER
+                ? RadarHud.ACM_RASTER_CELL_HALF_DEG * RadarHud.ACM_RASTER_ROWS
+                : RadarHud.ACM_FIXED_HALF_DEG;
+        int hw = Math.max(18, Math.abs(azToScreenX(half, w, h) - cx));
+        int hh = Math.max(18, Math.abs(elToScreenY(half, w, h) - cy));
+        drawCornerBoxRect(g, cx, cy, hw, hh,
+                Math.max(6, Math.round(8 * ui)), GREEN, pulse);
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_RASTER) {
+            int dim = ((int) (pulse * 150) << 24) | (GREEN & 0x00FFFFFF);
+            int gx1 = azToScreenX(-RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
+            int gx2 = azToScreenX(RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
+            int gy1 = elToScreenY(RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
+            int gy2 = elToScreenY(-RadarHud.ACM_RASTER_CELL_HALF_DEG, w, h);
+            g.fill(gx1, cy - hh, gx1 + 1, cy + hh, dim);
+            g.fill(gx2, cy - hh, gx2 + 1, cy + hh, dim);
+            g.fill(cx - hw, gy1, cx + hw, gy1 + 1, dim);
+            g.fill(cx - hw, gy2, cx + hw, gy2 + 1, dim);
+        }
+        if (RadarHud.acmBeamIndex == RadarHud.ACM_BEAM_RASTER) {
+            int bx = Math.max(0, Math.min(w - 1, azToScreenX(RadarHud.sweepAzimuthDeg, w, h)));
+            int by = Math.max(0, Math.min(h - 1, elToScreenY(RadarHud.sweepElevationDeg, w, h)));
+            g.fill(bx - beamLen, by, bx + beamLen, by + 1, col);
+        } else {
+            g.fill(cx - beamLen, cy, cx + beamLen, cy + 1, col);
+        }
+        g.drawString(mc.font, label, cx - hw, Math.max(4, cy - hh - 14), GREEN, false);
+    }
+
+    /** 竖带端帽：上端 = "[" 顺时针旋转 90°（横杆 + 向下短脚）；下端为镜像。 */
+    private static void drawRotatedBracket(GuiGraphics g, int x0, int x1, int y,
+                                           int len, boolean top, int color) {
+        int barTop = Math.max(0, Math.min(g.guiHeight() - 1, y));
+        g.fill(Math.max(0, x0), barTop, Math.min(g.guiWidth(), x1), barTop + 1, color);
+        int stubA = top ? barTop : Math.max(0, barTop - len);
+        int stubB = top ? Math.min(g.guiHeight(), barTop + len) : barTop;
+        if (stubB > stubA) {
+            g.fill(Math.max(0, x0), stubA, Math.min(g.guiWidth(), x0 + 1), stubB, color);
+            g.fill(Math.max(0, x1 - 1), stubA, Math.min(g.guiWidth(), x1), stubB, color);
+        }
     }
 
     /** 扫描线使用线性方位映射，保证 ±120° 以内不会因 tan() 翻转。 */
