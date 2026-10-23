@@ -531,9 +531,10 @@ public final class RadarHudClientTicker {
         float ui = HudScale.factor(sw, sh);
         double smallRadius = Math.max(16, Math.round(RadarHud.IR_LOCK_RING_BASE * ui));
 
-        // 牵引位置：雷达辅助优先（支持 BVR 数据链），否则自由搜索到的热源。
+        // 牵引位置：仅雷达辅助（含 BVR 数据链）或已锁定目标会拉动小圈；
+        // 自由搜索的热源不牵引——未锁定时小圈停在屏幕中央，必须由玩家对准目标。
         Vec3 aimPos = radarAim != null ? radarAim.position()
-                : (target != null ? target.getBoundingBox().getCenter() : null);
+                : (lockedTarget != null ? lockedTarget.getBoundingBox().getCenter() : null);
         if (aimPos != null) {
             float[] aimScreen = RadarHudRenderer.worldToScreen(aimPos, player, sw, sh);
             if (aimScreen != null) {

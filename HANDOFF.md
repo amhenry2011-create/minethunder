@@ -26,11 +26,12 @@
 7. `MissileSpecs`：SARH endSpeed 46 / timeLife 90s；ARH endSpeed 56 / timeLife 180s；IR timeLife 30s。
 8. `MissileFirePacket`：BVR 锁定时跳过本地类别/模式/方位包线/扫描校验（服务端已按航迹校验），修复“雷达目标丢失/模式不适用”误拒。
 9. `BvrTrackManager.filter`：非导弹航迹逐观察者做 LOS 遮挡剔除（本机导弹恒可见）；`TrackedTarget.bvr` 挂接本地实体（若已加载）。
-10. `RadarHudClientTicker`：`radarAssistTarget` → `RadarAssist`（UUID+实体可空+实时位置），IR 小圈按雷达辅助位置牵引（含 BVR），无本地实体不能强锁；BVR 拖锁 20 tick 宽限；导弹认领改用 `getOwnerUuid` 并每 tick 重认领。
+10. `RadarHudClientTicker`：`radarAssistTarget` → `RadarAssist`（UUID+实体可空+实时位置），IR 小圈按雷达辅助位置牵引（含 BVR），无本地实体不能强锁；**自由搜索的热源不牵引小圈**（未锁定/无雷达辅助时小圈停在屏幕中央，必须对准目标才能锁，修复“无需对准即可发射”）；BVR 拖锁 20 tick 宽限；导弹认领改用 `getOwnerUuid` 并每 tick 重认领。
 11. `RadarHudRenderer.localEchoVisible`：BVR 去重只在本地回波“确实会被绘制”（实体已加载且当前模式接受实时类别）时生效，避免落地目标被整条吃掉；引导线出面板钳制到边缘、失锁后仍画到最后已知位置；`RadarHud.pendingGuidanceTargetId` 供 IR 发射记录线端目标。
 
 ### 待办/下次优先
 - 实机：600/1000 档扫视距内目标（含落地幻翼靶）应显示且可 Alt+F 锁；BVR 锁→SARH 发射需红弧进度。
+- 实机：IR 无雷达辅助时必须把小圈对准热源才能锁；有雷达辅助时小圈牵引照旧。
 - 实机：高速载机发射不再急停；SARH/ARH 燃尽滑翔速度平滑；失锁后导弹继续 IOG 不空中自爆。
 - 实机：面板 ±60 铺满无暗带；扫描线在 FOV 70/110 下与视图对齐；包线仅在 TWS/TRK 出现。
 - 数值微调入口：`MissileSpecs` endSpeed/timeLife、`drawLaunchAssessment` 线长与最小射程、`SeekerLockModel.INSTANT_QUALITY`。
