@@ -6,6 +6,7 @@ import com.minethunder.missile.MissileLaunchService;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.radar.RadarCore;
+import com.minethunder.radar.SeekerLockModel;
 import com.minethunder.radar.ServerRadarState;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -110,10 +111,15 @@ public record MissileFirePacket(int guidance, int targetId,
             }
             Vec3 to = target.getBoundingBox().getCenter().subtract(player.getEyePosition());
             Vec3 look = player.getViewVector(1.0F).normalize();
-            double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
-            double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
-            if (!bvrLock && (Math.abs(az) > 120.0 || Math.abs(el) > 60.0)) {
-                reject(player, "目标超出雷达跟踪包线");
+            double offBoresight = to.lengthSqr() < 1.0E-6 ? 0.0
+                    : Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0,
+                    look.dot(to.normalize())))));
+            // 导引头 FOV 锥：导引头未对准目标（含 BVR 远程锁）不允许发射，
+            // 与客户端 SeekerLockModel 的退出余量一致，另加 1° 网络时序容差。
+            double launchCone = Math.max(spec.seekerFovDeg, 1.0)
+                    + SeekerLockModel.AIM_EXIT_MARGIN_DEG + 1.0;
+            if (offBoresight > launchCone) {
+                reject(player, "导引头未对准目标");
                 return;
             }
             if (!bvrLock) {

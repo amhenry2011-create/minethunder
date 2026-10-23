@@ -29,8 +29,15 @@
 10. `RadarHudClientTicker`：`radarAssistTarget` → `RadarAssist`（UUID+实体可空+实时位置），IR 小圈按雷达辅助位置牵引（含 BVR），无本地实体不能强锁；**自由搜索的热源不牵引小圈**（未锁定/无雷达辅助时小圈停在屏幕中央，必须对准目标才能锁，修复“无需对准即可发射”）；BVR 拖锁 20 tick 宽限；导弹认领改用 `getOwnerUuid` 并每 tick 重认领。
 11. `RadarHudRenderer.localEchoVisible`：BVR 去重只在本地回波“确实会被绘制”（实体已加载且当前模式接受实时类别）时生效，避免落地目标被整条吃掉；引导线出面板钳制到边缘、失锁后仍画到最后已知位置；`RadarHud.pendingGuidanceTargetId` 供 IR 发射记录线端目标。
 
+### 补丁 0.1.3：雷达弹发射必须对准（FOV 锥）
+- 用户反馈：SARH/ARH 大离轴也能发射（ARH 白弧在万向角 20-25° 内均可推进，实测可到 ~28°）。
+- 修复：`SeekerLockModel` 推进/发射锥从 `lockAngleMaxDeg`（万向角）改为 `seekerFovDeg`（导引头视场，SARH 10°/ARH 12°），退火起点 70% FOV、红倒计时退化 100% FOV、红双退化 85% FOV，离轴 > FOV+3° 直接回 SEARCHING；`AIM_EXIT_MARGIN_DEG` 改为 public 常量。
+- 服务端 `MissileFirePacket` 删除 ±120°/±60° 宽包线（BVR 曾整段跳过），改为同一 FOV 锥校验（`seekerFovDeg + 3° + 1° 网络容差`），BVR 远程锁同样适用；拒绝文案「导引头未对准目标」。
+- 结论：SARH 需在 ~±7-10° 内维持红弧才可发射；ARH 在 ~±13-15° 内（白弧即可）发射；不再有 28° 大离轴发射。
+
 ### 待办/下次优先
 - 实机：600/1000 档扫视距内目标（含落地幻翼靶）应显示且可 Alt+F 锁；BVR 锁→SARH 发射需红弧进度。
+- 实机：雷达弹大离轴（>FOV+3°）发射被拒「导引头未对准目标」；对准后 ARH 白弧/SARH 红弧可发射。
 - 实机：IR 无雷达辅助时必须把小圈对准热源才能锁；有雷达辅助时小圈牵引照旧。
 - 实机：高速载机发射不再急停；SARH/ARH 燃尽滑翔速度平滑；失锁后导弹继续 IOG 不空中自爆。
 - 实机：面板 ±60 铺满无暗带；扫描线在 FOV 70/110 下与视图对齐；包线仅在 TWS/TRK 出现。

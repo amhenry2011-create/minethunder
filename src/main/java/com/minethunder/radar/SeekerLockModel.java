@@ -11,7 +11,9 @@ import com.minethunder.missile.MissileSpec;
  * - TRACKING：红色倒计时环；ARH/SARH 均可发射。
  * - HIGH：红色双环；高置信稳定锁定。
  *
- * 环的颜色表示导引头锁定阶段；发射许可由 canLaunchArh/canLaunchSarh 控制。
+ * 推进与发射锥 = 导引头视场 seekerFovDeg（目标必须被机头/导引头对准），
+ * 超出 FOV + {@link #AIM_EXIT_MARGIN_DEG} 度直接回到 SEARCHING；发射许可由
+ * canLaunchArh/canLaunchSarh 控制，服务端用同一 FOV 锥校验。
  */
 public final class SeekerLockModel {
 
@@ -28,7 +30,8 @@ public final class SeekerLockModel {
     private static final double LOSE_QUALITY = 0.04;
     private static final double ENTER_QUALITY = 0.60;
     private static final double EXIT_QUALITY = 0.40;
-    private static final double GIMBAL_EXIT_MARGIN_DEG = 3.0;
+    /** 离轴超过导引头 FOV 后允许再坚持的余量（度）；客户端退出与服务端发射校验共用。 */
+    public static final double AIM_EXIT_MARGIN_DEG = 3.0;
 
     /**
      * 极高信号质量：白弧/红弧可在一两 tick 内直接填满（不做阈值跳段，
@@ -36,12 +39,12 @@ public final class SeekerLockModel {
      */
     private static final double INSTANT_QUALITY = 0.90;
 
-    // 朝向摆到非理想位置（离轴 > 万向角 35%）时，进度按离轴比例持续回退；
-    // 越接近轴线极限退得越快，锁定因此退回上一阶段。
-    private static final double AIM_DEGRADE_START = 0.35;
+    // 导引头 FOV（seekerFovDeg）是推进/发射锥：离轴 > 70% FOV 起进度回退，
+    // 越接近极限退得越快；离轴 > 100% FOV 退回白圈，> 85% 双环退回红倒计时。
+    private static final double AIM_DEGRADE_START = 0.7;
     private static final double AIM_DEGRADE_RATE = 0.9;
-    private static final double TRACKING_EXIT_OFF_FRAC = 0.75;
-    private static final double HIGH_EXIT_OFF_FRAC = 0.60;
+    private static final double TRACKING_EXIT_OFF_FRAC = 1.0;
+    private static final double HIGH_EXIT_OFF_FRAC = 0.85;
 
     private State state = State.SEARCHING;
     private double progress;
@@ -119,8 +122,8 @@ public final class SeekerLockModel {
             return;
         }
 
-        double gimbal = Math.max(spec.lockAngleMaxDeg, 1.0);
-        double angleMargin = clamp(1.0 - offBoresightDeg / gimbal, 0.0, 1.0);
+        double cone = Math.max(spec.seekerFovDeg, 1.0);
+        double angleMargin = clamp(1.0 - offBoresightDeg / cone, 0.0, 1.0);
         double rangeMargin = clamp(1.0 - range / Math.max(spec.acquireRange(), 1.0), 0.0, 1.0);
         double closureQuality = clamp(Math.abs(closure) / 300.0, 0.0, 1.0);
         double notchQuality = Math.abs(closure) < NOTCH_CLOSURE ? 0.1 : 1.0;
@@ -128,16 +131,16 @@ public final class SeekerLockModel {
         quality = clamp(0.45 * angleMargin + 0.25 * rangeMargin
                 + 0.15 * closureQuality + 0.15 * notchQuality, 0.0, 1.0);
 
-        inEnvelope = offBoresightDeg <= gimbal
+        inEnvelope = offBoresightDeg <= cone
                 && range <= spec.maxDistance
                 && quality >= EXIT_QUALITY;
 
-        // 离轴角在万向角内的相对开销：>35% 起进度回退，越靠边越狠。
-        double offFrac = offBoresightDeg / gimbal;
+        // 离轴角在导引头 FOV 内的相对开销：>70% FOV 起进度回退，越靠边越狠。
+        double offFrac = offBoresightDeg / cone;
         double aimDegrade = Math.max(0.0, offFrac - AIM_DEGRADE_START);
 
-        // 离轴角超出万向角（带退出滞回）→ 导引头看不到目标，回到单白圈。
-        if (offBoresightDeg > gimbal + GIMBAL_EXIT_MARGIN_DEG) {
+        // 离轴角超出导引头 FOV（带退出滞回）→ 导引头看不到目标，回到单白圈。
+        if (offBoresightDeg > cone + AIM_EXIT_MARGIN_DEG) {
             state = State.SEARCHING;
             progress = 0;
             stability = 0;
