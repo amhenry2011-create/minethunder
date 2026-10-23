@@ -300,6 +300,11 @@ public static Entity getTarget(Player player) {
 
 ### P1-6 导弹初速被 `endSpeed` 硬截断，与 `initializeLaunch` 的载机速度叠加互相矛盾
 
+**状态：已修复（2026-10-23 六轮）**
+- `MissileArrow` 新增 `integratePropulsion()`：推力/阻力每 tick 独立推进，与是否存在制导解无关；
+- 移除 `speedMps = Math.min(speedMps, spec.endSpeed)` 硬钳制，燃尽后过剩速度按 `exp(-dt/2s)` 平滑衰减到 `endSpeed`；
+- `applyGuidance` 只保留机动诱导阻力与爬升代价，高速载机发射不再“急停”。
+
 **位置**：`src/main/java/com/minethunder/missile/MissileArrow.java:149`、`:526`
 
 **代码**

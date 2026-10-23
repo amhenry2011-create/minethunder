@@ -22,9 +22,9 @@ public final class MissileSpecs {
             10.0,       // gateWidth 10°
             3.0,        // prolongationTimeMax 3s
             0,          // startSpeed 载机速度 + 20 m/s 弹射
-            48.0,       // endSpeed ≈ 鞘翅极速 40 b/s × 1.2
+            46.0,       // endSpeed：SARH 略慢于 ARH（滑翔维持速度）
             1000.0,     // WT R-27ER 发射距离 100 km，按 10 b/km 缩放
-            60.0,       // WT R-27ER 制导时间 60 s
+            90.0,       // 制导时间 90 s（拖锁后 IOG 继续，不自爆）
             12000.0,    // force 12kN
             15.0,       // timeFire 15s
             350.0,      // WT R-27ER 质量 350 kg
@@ -49,9 +49,9 @@ public final class MissileSpecs {
             12.0,
             3.0,
             0,
-            48.0,
+            56.0,       // endSpeed：ARH 滑翔维持速度高于 SARH
             1200.0,    // WT R-77-1 发射距离 120 km，按 10 b/km 缩放
-            120.0,      // WT R-77-1 制导时间 120 s
+            180.0,      // 制导时间 180 s（拖锁后 IOG 继续，不自爆）
             15000.0,
             20.0,
             190.0,      // WT R-77-1 质量 190 kg
@@ -79,7 +79,7 @@ public final class MissileSpecs {
             0,
             48.0,       // endSpeed ≈ 鞘翅极速 40 b/s × 1.2
             300.0,      // WT 发射距离 30 km（按 10 b/km）
-            20.0,       // timeLife 20s
+            30.0,       // timeLife 30 s（失锁后 IOG 继续，不自爆）
             6000.0,     // force 6kN
             5.0,        // timeFire 5s
             105.0,      // WT R-73 质量 105 kg

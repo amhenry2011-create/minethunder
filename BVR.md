@@ -14,11 +14,11 @@
 | 文件 | 作用 |
 |------|------|
 | `radar/BvrTicketService.java` | 服务端区块 ticket：`TicketType.FORCED`、radius=2（5×5 实体 ticking）、forceTicks。所有导弹（`MissileArrow` 及子类）一律持票、不设上限；带 `minethunder_bvr` 标签的实体每 5 tick 维护一个 ticket（上限 64），退出/离线时回收。 |
-| `radar/BvrTrackManager.java` | 每 2 tick 采样快照：玩家（PLAYER）、带标签实体（AIR/SURFACE）、飞行中导弹（MISSILE，含 ownerUuid）。距离过滤：总范围 1000 b；非本机导弹仅 600 b 内；导弹 owner 是 viewer 时全程保留。发送 `BvrSyncPacket`。 |
+| `radar/BvrTrackManager.java` | 每 2 tick 采样快照：玩家（PLAYER）、带标签实体（AIR/SURFACE）、飞行中导弹（MISSILE，含 ownerUuid）。距离过滤：总范围 1000 b；非本机导弹仅 600 b 内；导弹 owner 是 viewer 时全程保留。非导弹航迹按观察者做 LOS 遮挡剔除（山体/地面后的目标不发布）。发送 `BvrSyncPacket`。 |
 | `network/BvrSyncPacket.java` | 服务端→客户端全量航迹：UUID、kind、ownerUuid、name、pos、vel、entityId。 |
 | `radar/TargetSource.java` + `client/TrackedTarget.java` + `client/TargetRegistry.java` | 统一目标抽象：本地回波与 BVR 航迹合成同一份候选/选择/锁定列表；本地目标多一个已加载实体，其余（范围/新鲜度/拖锁/FOV 规则）完全一致。BVR 目标在 ACQ/TRK 期间由 `refreshBvrPaint` 每 tick 续期涂抹，等同数据链连续跟踪。 |
 | `network/RadarSyncPacket.java` | 客户端→服务端唯一锁定同步：`targetId`（本地）+ `targetUuid/targetSource`（BVR）。`BvrLockPacket` 已删除，BVR 锁不再是独立包，无“设置/解除”双状态。 |
-| `radar/ServerRadarState.java` | `LockState.bvrTargetUuid`；`update(...targetUuid, targetSource)` 统一入口，`validateBvrTarget`（同维度、AIR、16..1000 b、须活着）后写入；`canLaunchArh`/`canLaunchSarh` 在 BVR 锁时放行（SARH 由远程锁充当持续照射）；`getBvrTarget` 按 UUID 解析实体。 |
+| `radar/ServerRadarState.java` | `LockState.bvrTargetUuid`；`update(...targetUuid, targetSource)` 统一入口，`validateBvrTarget`（同维度、不限目标类别（地面/海面也可）、无 LOS 遮挡、16..1000 b、须活着）后写入；`canLaunchArh` 在 BVR 锁时放行，`canLaunchSarh` 在 BVR 锁时要求导引头达到 TRACKING 以上（与本地同规）；`getBvrTarget` 按 UUID 解析实体。 |
 | `client/BvrState.java` | 缓存航迹，30 tick 未更新过期；`hasOwnMissile`/`ownMissile` 用于发射线延长；`Paint` 涂抹记忆（波束扫过才建立/刷新、180 tick 过期，同本地回波），未扫到的航迹面板不显示也不更新。 |
 | `client/RadarHudClientTicker.java` | 统一锁定生命周期：`beginLockAcquisition(TrackedTarget)` → `updateLockAcquisition`（BVR 跳过扫描新鲜度、持续续涂抹）→ `completeLock`（切 STT，`lastMode` 同步防止下一 tick 清锁）→ `updateContinuousTrack`（本地/BVR 共用 ±120°/±60° 门限与拖锁宽限）；Alt+F 走 `TargetRegistry.bestLockCandidate`；发射线 UUID 延长、导弹在飞判定合并 BVR 航迹；`updateBvrPaints` 用与本地扫描相同的波束窗口判定 BVR 航迹是否被扫过。 |
 | `client/RadarHudRenderer.java` | 无专属 BVR 视觉：`trackingView = RadarHud.isTrackingView()`；ACQ/TRK 框、模式字、面板高亮全部走统一 `lockedTargetUuid/lockedTargetSource`；主屏远程锁定画普通绿色锁定框+数据（`TargetRegistry.find` 实时位置）。`ACQ BVR`/`TRK BVR` 模式字样删除，复用 `ACQ PD`/`TRK PD`。 |
@@ -47,7 +47,7 @@
 
 ### SARH/ARH 发射 & 数据链
 1. 客户端发射门限统一走导引头模型：ARH 需白/红倒计时环（`seekerModel.canLaunchArh`）、SARH 需红色双环（`canLaunchSarh`）、IR 需热源锁定；本地/BVR/TWS 软跟踪不再有单独的 ≥10 tick 门控。
-2. `MissileFirePacket` 携带 `bvrTargetUuid`；服务端跳过本地回波“扫描命中”校验（BVR 目标本无本地回波），其余射程/离轴角/遮挡照常；`canLaunchSarh` 对 BVR 远程锁放行（远程 TRK = 持续照射）。服务端所有拒绝路径都通过 actionbar 返回原因，不再静默失败。
+2. `MissileFirePacket` 携带 `bvrTargetUuid`；服务端跳过本地回波“扫描命中”校验（BVR 目标本无本地回波），同时跳过本地类别/模式与方位包线校验（服务端 `validateBvrTarget` 已按航迹校验，避免落地目标本地判类不一致误拒），射程/遮挡照常；`canLaunchSarh` 对 BVR 远程锁要求导引头 TRACKING 以上（远程 TRK = 持续照射）。服务端所有拒绝路径都通过 actionbar 返回原因，不再静默失败。
 3. 导弹出膛即有目标实体（服务端按 UUID 解析）；ARH 中段按 `datalinkValid` 维持数据链；SARH 中段照射 = 发射方 STT 硬锁 或 BVR 远程软锁 uuid 持续命中（搜扫失涂后超延长计数才失照爆散）。
 4. 目标丢失（死亡/尾流失效）后按 IOG 惯性飞行、ARH 末段 `seekerActivationRange` 自主搜索。
 

@@ -1,9 +1,41 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-23
-状态：统一目标抽象重构（BVR 完全继承普通 TRK）+ BVR 发射同步/反馈修复 + ARH pitbull 放宽。已构建待实测。
+状态：六轮（面板 ±60 / 扫描线随 FOV / 导引头分段环 / 发射包线重写 / 导弹独立推进+不自爆 / BVR 修锁 / IR BVR 牵引 / 引导线修复）。已构建待实测。
 
-## 2026-10-23 五轮：统一目标抽象 + BVR 发射同步/反馈 + ARH 放宽（最新）
+## 2026-10-23 六轮：面板铺满、导引头环分段、导弹飞行与 BVR 修复（最新）
+
+### 用户反馈与决议
+- 面板方位轴改为 ±60 铺满（TRK/TWS 跟踪视图满宽无暗带）；不再做整屏 UI。
+- 主屏扫描提示线必须随相机 FOV（此前固定线性映射，转视角/改 FOV 不同步）。
+- 导引头环不要阈值跳段：白弧/红弧/红双各自 0–100% 计算，条件极好允许瞬间填满，但仍按 白→红→红双 链条推进。
+- 发射包线只在 TWS 软跟 / TRK 跟踪时显示（面板右侧）：目标线 10%、最大射程线 8%、最小射程短线 6%、NEZ `]` 动态；**全绿，不可命中不缩短不变色**。
+- SARH 必须红弧以上才可发射（服务端 BVR 分支此前绕过，已补）；ARH 白弧以上；IR 仍需强锁。
+- 导弹拖锁/掉锁定不自爆：SARH 失照、IR 失热源都转 IOG（最后已知航迹）继续飞；所有速度/时间参数实机微调。
+- BVR 允许地面/海面目标（去掉 AIR 硬卡）；被地形遮挡的航迹服务端直接不发布；客户端 BVR 短暂断流 20 tick 宽限。
+- IR 对 BVR 目标也做雷达辅助牵引（数据链位置，同一套牵引速度）；BVR 目标本地已加载时可用真实热源完成 IR 强锁。
+- “300 b 以上档位也要能扫到视距内目标”：修复本地回波/BVR 去重互相吃掉目标的问题。
+
+### 本轮改动
+1. `RadarHud.PANEL_AZIMUTH_DEG` 120→60；`KeyInputHandler.cycleRange` 解除 TRK 冻结（ACQ 仍冻结）。
+2. `RadarHudRenderer.renderScanOverlay` 改用 `azToScreenX`（相机 FOV 透视，±85° 安全钳制），删除旧 `scanScreenX`。
+3. `SeekerLockModel`：删除 `SKIP_TO_*` 跳段；每阶段按质量积分（`fillRate`），`quality ≥ 0.90` 瞬间填满当前段；进入 ACQUIRING 按质量播种进度；`canLaunchSarh = TRACKING/HIGH` 不变。
+4. `ServerRadarState.canLaunchSarh`：BVR 分支同样要求 `seekerState ≥ TRACKING`；`validateBvrTarget` 去掉 AIR 限制并加 LOS 遮挡校验。
+5. `drawLaunchAssessment` 重写：TWS 用 `TwsTrackManager.selected()`、TRK 用锁定目标距离/速度；`MissileSpec.idealBurnoutSpeed()`（ve·ln(m0/m1)）计算动态 NEZ；最小射程 IR 300 / SARH 1500 / ARH 800 b；全部绿色。
+6. `MissileArrow`：新增 `DATA_OWNER_UUID` 同步与 `getOwnerUuid()`；`integratePropulsion()` 每 tick 独立点火/阻力；燃尽过剩速度 `exp(-dt/2s)` 平滑到 `endSpeed`；`setTarget` 即写最后已知航迹；SARH/IR 失锁不再自爆（IOG 续飞）。
+7. `MissileSpecs`：SARH endSpeed 46 / timeLife 90s；ARH endSpeed 56 / timeLife 180s；IR timeLife 30s。
+8. `MissileFirePacket`：BVR 锁定时跳过本地类别/模式/方位包线/扫描校验（服务端已按航迹校验），修复“雷达目标丢失/模式不适用”误拒。
+9. `BvrTrackManager.filter`：非导弹航迹逐观察者做 LOS 遮挡剔除（本机导弹恒可见）；`TrackedTarget.bvr` 挂接本地实体（若已加载）。
+10. `RadarHudClientTicker`：`radarAssistTarget` → `RadarAssist`（UUID+实体可空+实时位置），IR 小圈按雷达辅助位置牵引（含 BVR），无本地实体不能强锁；BVR 拖锁 20 tick 宽限；导弹认领改用 `getOwnerUuid` 并每 tick 重认领。
+11. `RadarHudRenderer.localEchoVisible`：BVR 去重只在本地回波“确实会被绘制”（实体已加载且当前模式接受实时类别）时生效，避免落地目标被整条吃掉；引导线出面板钳制到边缘、失锁后仍画到最后已知位置；`RadarHud.pendingGuidanceTargetId` 供 IR 发射记录线端目标。
+
+### 待办/下次优先
+- 实机：600/1000 档扫视距内目标（含落地幻翼靶）应显示且可 Alt+F 锁；BVR 锁→SARH 发射需红弧进度。
+- 实机：高速载机发射不再急停；SARH/ARH 燃尽滑翔速度平滑；失锁后导弹继续 IOG 不空中自爆。
+- 实机：面板 ±60 铺满无暗带；扫描线在 FOV 70/110 下与视图对齐；包线仅在 TWS/TRK 出现。
+- 数值微调入口：`MissileSpecs` endSpeed/timeLife、`drawLaunchAssessment` 线长与最小射程、`SeekerLockModel.INSTANT_QUALITY`。
+
+## 2026-10-23 五轮：统一目标抽象 + BVR 发射同步/反馈 + ARH 放宽（上一轮）
 
 ### 用户反馈与决议
 - “BVR 目标还是扫描太大 / 锁上后雷达还在扫” → BVR 锁定完成现在和本地一样切 `currentMode=STT`，TRK 视图固定 ±120°、天线跟随目标、扫描线/扫描波束全部停用（`RadarHud.isTrackingView()` 统一判定）。

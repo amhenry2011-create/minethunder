@@ -92,13 +92,17 @@ public record MissileFirePacket(int guidance, int targetId,
                 return;
             }
             var targetClass = RadarCore.classify(target);
-            if (targetClass == null) {
-                reject(player, "目标类型无效");
-                return;
-            }
-            if (!mode.accepts(targetClass)) {
-                reject(player, "目标不适用当前雷达模式");
-                return;
+            // BVR 远程锁定：服务端 validateBvrTarget 已按航迹校验；本地分类
+            // （如落地幻翼被判 GROUND）与航迹显示类别可能不同，不做二次门槛。
+            if (!bvrLock) {
+                if (targetClass == null) {
+                    reject(player, "目标类型无效");
+                    return;
+                }
+                if (!mode.accepts(targetClass)) {
+                    reject(player, "目标不适用当前雷达模式");
+                    return;
+                }
             }
             if (player.distanceTo(target) > spec.maxDistance) {
                 reject(player, "目标超出导弹射程");
@@ -108,7 +112,7 @@ public record MissileFirePacket(int guidance, int targetId,
             Vec3 look = player.getViewVector(1.0F).normalize();
             double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
             double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
-            if (Math.abs(az) > 120.0 || Math.abs(el) > 60.0) {
+            if (!bvrLock && (Math.abs(az) > 120.0 || Math.abs(el) > 60.0)) {
                 reject(player, "目标超出雷达跟踪包线");
                 return;
             }

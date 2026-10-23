@@ -24,20 +24,17 @@ public final class SeekerLockModel {
 
     private static final double NOTCH_CLOSURE = RadarCore.DOPPLER_NOTCH_THRESHOLD;
     private static final double ACQUIRE_SECONDS = 1.6;
-    private static final double STABILITY_SECONDS = 1.6;
     private static final double ACQUIRE_QUALITY = 0.12;
     private static final double LOSE_QUALITY = 0.04;
     private static final double ENTER_QUALITY = 0.60;
     private static final double EXIT_QUALITY = 0.40;
     private static final double GIMBAL_EXIT_MARGIN_DEG = 3.0;
 
-    // 近距离/高质量信号直跳：≤40 b 高质量（含悬停近靶）直接红双环；≤120 b 直接红倒计时。
-    private static final double SKIP_TO_HIGH_QUALITY = 0.60;
-    private static final double SKIP_TO_HIGH_MAX_RANGE = 40.0;
-    private static final double SKIP_TO_FAR_HIGH_QUALITY = 0.80;
-    private static final double SKIP_TO_FAR_HIGH_MAX_RANGE = 80.0;
-    private static final double SKIP_TO_TRACKING_QUALITY = 0.55;
-    private static final double SKIP_TO_TRACKING_MAX_RANGE = 120.0;
+    /**
+     * 极高信号质量：白弧/红弧可在一两 tick 内直接填满（不做阈值跳段，
+     * 依旧按 白弧→红弧→红双 的链条推进，只是每阶段瞬时到底）。
+     */
+    private static final double INSTANT_QUALITY = 0.90;
 
     // 朝向摆到非理想位置（离轴 > 万向角 35%）时，进度按离轴比例持续回退；
     // 越接近轴线极限退得越快，锁定因此退回上一阶段。
@@ -149,29 +146,22 @@ public final class SeekerLockModel {
 
         switch (state) {
             case SEARCHING -> {
-                if (quality >= SKIP_TO_FAR_HIGH_QUALITY
-                        && range <= SKIP_TO_FAR_HIGH_MAX_RANGE) {
-                    state = State.HIGH;
+                if (quality >= INSTANT_QUALITY) {
+                    // 信号极好：白弧瞬时填满，下一 tick 进红弧。
+                    state = State.ACQUIRING;
                     progress = 1.0;
-                    stability = 1.0;
-                } else if (quality >= SKIP_TO_HIGH_QUALITY
-                        && range <= SKIP_TO_HIGH_MAX_RANGE) {
-                    state = State.HIGH;
-                    progress = 1.0;
-                    stability = 1.0;
-                } else if (quality >= SKIP_TO_TRACKING_QUALITY
-                        && range <= SKIP_TO_TRACKING_MAX_RANGE) {
-                    state = State.TRACKING;
-                    progress = 1.0;
-                    stability = 0.0;
                 } else if (quality > ACQUIRE_QUALITY) {
                     state = State.ACQUIRING;
+                    progress = seedProgress(quality);
                 }
             }
             case ACQUIRING -> {
-                progress += dt * (0.35 + quality * 0.65) / ACQUIRE_SECONDS;
+                progress += dt * fillRate(quality);
                 // 朝向拉离理想位置：进度持续回退。
                 progress -= dt * AIM_DEGRADE_RATE * aimDegrade;
+                if (quality >= INSTANT_QUALITY) {
+                    progress = 1.0;
+                }
                 if (progress >= 1.0) {
                     progress = 1.0;
                     state = State.TRACKING;
@@ -188,8 +178,11 @@ public final class SeekerLockModel {
                 }
             }
             case TRACKING -> {
-                stability = clamp(stability + dt / STABILITY_SECONDS
+                stability = clamp(stability + dt * fillRate(quality)
                         - dt * AIM_DEGRADE_RATE * aimDegrade * 1.5, 0.0, 1.0);
+                if (quality >= INSTANT_QUALITY) {
+                    stability = 1.0;
+                }
                 if (stability >= 1.0 && inEnvelope && quality >= ENTER_QUALITY) {
                     state = State.HIGH;
                 } else if (offFrac > TRACKING_EXIT_OFF_FRAC
@@ -207,6 +200,20 @@ public final class SeekerLockModel {
                 }
             }
         }
+    }
+
+    /** 每阶段填充速率（/秒）：质量越高填得越快，条件一般仍需约 1.6 s。 */
+    private static double fillRate(double quality) {
+        return (0.35 + quality * 0.65) / ACQUIRE_SECONDS;
+    }
+
+    /** 进入 ACQUIRING 时按当前质量播种白弧进度，避免从 0 重新爬。 */
+    private static double seedProgress(double quality) {
+        double span = INSTANT_QUALITY - ACQUIRE_QUALITY;
+        if (span <= 0.0) {
+            return 0.0;
+        }
+        return clamp((quality - ACQUIRE_QUALITY) / span, 0.0, 0.98);
     }
 
     private static double clamp(double v, double min, double max) {

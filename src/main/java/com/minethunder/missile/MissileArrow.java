@@ -38,6 +38,9 @@ import java.util.UUID;
 public abstract class MissileArrow extends AbstractArrow {
     private static final EntityDataAccessor<Optional<UUID>> DATA_TARGET =
             SynchedEntityData.defineId(MissileArrow.class, EntityDataSerializers.OPTIONAL_UUID);
+    /** 发射者 UUID 同步给客户端（owner 实体未在客户端加载时仍可识别本机导弹）。 */
+    private static final EntityDataAccessor<Optional<UUID>> DATA_OWNER_UUID =
+            SynchedEntityData.defineId(MissileArrow.class, EntityDataSerializers.OPTIONAL_UUID);
 
     protected final MissileSpec spec;
     @Nullable
@@ -76,6 +79,8 @@ public abstract class MissileArrow extends AbstractArrow {
     private static final int DATALINK_UPDATE_TICKS = 4;
     private static final double SERVO_TAU = 0.08;
     private static final double CONTROL_RAMP_SECONDS = 0.25;
+    /** 燃尽后过剩速度向 endSpeed 衰减的时间常数（秒）。 */
+    private static final double BURNOUT_DECAY_TAU = 2.0;
 
     protected MissileArrow(EntityType<? extends AbstractArrow> type, Level level, MissileSpec spec) {
         super(type, level);
@@ -197,6 +202,27 @@ public abstract class MissileArrow extends AbstractArrow {
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         super.defineSynchedData(builder);
         builder.define(DATA_TARGET, Optional.empty());
+        builder.define(DATA_OWNER_UUID, Optional.empty());
+    }
+
+    @Override
+    public void setOwner(@Nullable Entity owner) {
+        super.setOwner(owner);
+        if (!level().isClientSide) {
+            this.entityData.set(DATA_OWNER_UUID,
+                    Optional.ofNullable(owner == null ? null : owner.getUUID()));
+        }
+    }
+
+    /** 客户端可用的发射者 UUID（owner 实体未同步时兜底）。 */
+    @Nullable
+    public UUID getOwnerUuid() {
+        Optional<UUID> synced = entityData.get(DATA_OWNER_UUID);
+        if (synced.isPresent()) {
+            return synced.get();
+        }
+        Entity owner = getOwner();
+        return owner == null ? null : owner.getUUID();
     }
 
     /** 设置初始目标（发射时锁定的实体），并同步 UUID 给客户端用于 RWR/调试。 */
@@ -206,9 +232,12 @@ public abstract class MissileArrow extends AbstractArrow {
         this.measuredTargetVelocity = Vec3.ZERO;
         this.measuredTargetAcceleration = Vec3.ZERO;
         this.measuredTargetTick = -100;
-        this.lastKnownTargetPos = null;
-        this.lastKnownTargetVelocity = Vec3.ZERO;
-        this.lastKnownTargetTick = -1;
+        // 发射即记录最后已知航迹：数据链中断后也有 IOG 起点。
+        this.lastKnownTargetPos = target == null
+                ? null : target.getBoundingBox().getCenter();
+        this.lastKnownTargetVelocity = target == null
+                ? Vec3.ZERO : target.getDeltaMovement().scale(20.0);
+        this.lastKnownTargetTick = target == null ? -1 : age;
         this.guidanceLosDir = null;
         if (!level().isClientSide) {
             this.entityData.set(DATA_TARGET, Optional.ofNullable(this.targetId));
@@ -243,6 +272,9 @@ public abstract class MissileArrow extends AbstractArrow {
         targetId = tag.contains("MTTarget") ? parseUuid(tag.getString("MTTarget")) : null;
         if (!level().isClientSide) {
             entityData.set(DATA_TARGET, Optional.ofNullable(targetId));
+            Entity owner = getOwner();
+            entityData.set(DATA_OWNER_UUID,
+                    Optional.ofNullable(owner == null ? null : owner.getUUID()));
         }
         age = tag.getInt("MTAge");
         distanceFlown = tag.getDouble("MTDistanceFlown");
@@ -347,6 +379,11 @@ public abstract class MissileArrow extends AbstractArrow {
         if (spec.guidance == MissileSpec.Guidance.ARH
                 && age / 20.0 < spec.ignitionDelay()) {
             setDeltaMovement(getDeltaMovement().add(0.0, -0.05, 0.0));
+        }
+
+        // 发动机/阻力独立推进：没有制导解（拖锁、丢掉目标）也照常点火与减速。
+        if (!level().isClientSide) {
+            integratePropulsion();
         }
 
         // 发射瞬间目标捕获（服务端）：按发射者视线方向找目标
@@ -596,15 +633,8 @@ public abstract class MissileArrow extends AbstractArrow {
         // m/s² -> blocks/tick²（1 block/tick = 20 m/s，1 tick = 1/20 s）
         Vec3 newVelocity = velocity.add(servoAcceleration.scale(1.0 / 400.0));
 
-        double currentMass = spec.massAt(elapsed);
-        // 动力段/滑翔段速度
-        if (spec.isBoosting(elapsed)) {
-            speedMps += spec.boostAcceleration(elapsed) / 20.0;
-        } else {
-            speedMps -= spec.dragDeceleration(speedMps, currentMass) / 20.0;
-            speedMps = Math.min(speedMps, spec.endSpeed);
-        }
-        speedMps = Math.max(0, speedMps);
+        // 发动机/阻力已在 integratePropulsion() 每 tick 独立推进；
+        // 这里只叠加机动损耗与爬升代价，避免燃尽瞬间速度被硬钳掉。
         // 大过载转弯消耗动能，体现 4/8 点方向能量耗弹。
         double inducedDrag = servoAcceleration.length() / Math.max(speedMps, 1.0)
                 * 0.4 * dt;
@@ -617,6 +647,31 @@ public abstract class MissileArrow extends AbstractArrow {
             newVelocity = newVelocity.normalize().scale(speedMps / 20.0);
         }
         setDeltaMovement(newVelocity);
+    }
+
+    /**
+     * 发动机推力与气动阻力：每 tick 由弹体自身推进，与是否存在制导解无关。
+     * 燃尽后速度以指数方式向 endSpeed 衰减（时间常数约 2 秒），
+     * 而不是立刻钳到 endSpeed —— 高速载机发射不再出现“急停”。
+     */
+    private void integratePropulsion() {
+        double elapsed = age / 20.0;
+        Vec3 velocity = getDeltaMovement();
+        double speedMps = velocity.length() * 20.0;
+        if (spec.isBoosting(elapsed)) {
+            speedMps += spec.boostAcceleration(elapsed) / 20.0;
+        } else if (elapsed > spec.ignitionDelay()) {
+            speedMps -= spec.dragDeceleration(speedMps, spec.massAt(elapsed)) / 20.0;
+            if (speedMps > spec.endSpeed) {
+                double excess = speedMps - spec.endSpeed;
+                speedMps = spec.endSpeed
+                        + excess * Math.exp(-(1.0 / 20.0) / BURNOUT_DECAY_TAU);
+            }
+        }
+        speedMps = Math.max(0.0, speedMps);
+        if (velocity.lengthSqr() > 1.0E-8 && speedMps > 0.0) {
+            setDeltaMovement(velocity.normalize().scale(speedMps / 20.0));
+        }
     }
 
     private static Vec3 slewTowards(Vec3 current, Vec3 desired, double maxRadians) {

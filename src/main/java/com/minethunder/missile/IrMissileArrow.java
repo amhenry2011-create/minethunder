@@ -50,11 +50,12 @@ public class IrMissileArrow extends MissileArrow {
         return target;
     }
 
+    /**
+     * 导引头丢失热源：不自爆，转 IOG（最后已知航迹）继续飞行；
+     * 制导时长/最大距离由基类统一裁决。
+     */
     private Entity loseSeeker() {
         seekerLostTicks++;
-        if (seekerLostTicks > Math.max(1, spec.prolongationTimeMax * 20)) {
-            detonate(null);
-        }
         return null;
     }
 }

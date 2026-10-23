@@ -11,7 +11,7 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * 半主动雷达弹（类似 AIM-7）：依赖发射方持续雷达照射（STT）。
- * 目标由发射方雷达提供；照射中断后惯性飞行，超过延续时间自爆。
+ * 目标由发射方雷达提供；照射中断后惯性飞行（IOG），不自爆。
  */
 public class SarhMissileArrow extends MissileArrow {
     /** 发射方玩家 UUID */
@@ -95,13 +95,13 @@ public class SarhMissileArrow extends MissileArrow {
         return bvrUuid != null && bvrUuid.equals(target.getUUID());
     }
 
+    /**
+     * 照射中断：不自爆，转为 IOG（最后已知航迹）继续飞行；
+     * 制导时长/最大距离由基类统一裁决。
+     */
     private Entity loseIllumination() {
         illuminated = false;
         lostLockTicks++;
-        if (lostLockTicks > Math.max(1, spec.prolongationTimeMax * 20)) {
-            detonate(null);
-            return null;
-        }
         return null;
     }
 

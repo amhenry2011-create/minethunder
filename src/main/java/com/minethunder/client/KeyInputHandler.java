@@ -216,10 +216,6 @@ public final class KeyInputHandler {
             notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，距离档已冻结"));
             return;
         }
-        if (RadarHud.isTrackingView()) {
-            notifyClient(mc, Component.literal("TRK PD 跟踪中，距离档已冻结"));
-            return;
-        }
         if (RadarHud.isAcmContext()) {
             RadarHud.acmRangeIndex = (RadarHud.acmRangeIndex + 1) % RadarHud.ACM_RANGES.length;
             RadarHud.acmRange = RadarHud.ACM_RANGES[RadarHud.acmRangeIndex];
@@ -432,6 +428,7 @@ public final class KeyInputHandler {
         RadarHud.selectedSpec = specFor(chosen);
         int targetId = chosen == MissileSpec.Guidance.IR
                 ? RadarHud.seekerLockedEntity.getId() : -1;
+        RadarHud.pendingGuidanceTargetId = targetId;
         java.util.UUID bvrUuid = bvrLock ? RadarHud.lockedTargetUuid : null;
         Network.sendToServer(new MissileFirePacket(chosen.ordinal(), targetId, bvrUuid));
         RadarHudClientTicker.closeSeekerAfterLaunch();

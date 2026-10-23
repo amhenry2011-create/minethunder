@@ -143,6 +143,15 @@ public final class MissileSpec {
         return Math.min(80.0, cxK * speed * speed / Math.max(mass, 1.0) * 10.0);
     }
 
+    /** 发动机理想末速（真空 Δv，m/s）：ve · ln(m0/m1)，用于包线/NEZ 估算。 */
+    public double idealBurnoutSpeed() {
+        if (timeFire <= 0.0 || mass <= massEnd || massEnd <= 0.0) {
+            return Math.max(endSpeed, 1.0);
+        }
+        double massFlow = (mass - massEnd) / timeFire;
+        return Math.max(endSpeed, force / massFlow * Math.log(mass / massEnd));
+    }
+
     /** 最大可用侧向加速度（m/s²）：G 限制 */
     public double lateralAcceleration() {
         return maxG * 9.81;

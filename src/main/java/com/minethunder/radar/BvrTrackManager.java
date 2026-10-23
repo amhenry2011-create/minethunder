@@ -131,12 +131,19 @@ public final class BvrTrackManager {
     private static List<BvrTrack> filter(ServerPlayer viewer, List<BvrTrack> tracks) {
         List<BvrTrack> visible = new ArrayList<>();
         Vec3 eye = viewer.getEyePosition();
+        ServerLevel level = viewer.serverLevel();
         for (BvrTrack track : tracks) {
             double distance = track.position().distanceTo(eye);
             if (distance < 1.0 || distance > RANGE) continue;
             if (track.kind() == BvrKind.MISSILE) {
+                // 本机导弹永远可见（面板引导标记依赖）；他机导弹只发布到 600 格。
                 boolean own = viewer.getUUID().equals(track.ownerUuid());
                 if (!own && distance > MISSILE_RANGE) continue;
+            } else if (RadarCore.isOccludedForTarget(level, eye, track.position(),
+                    track.kind() == BvrKind.SURFACE
+                            ? RadarTargetClass.SEA : RadarTargetClass.AIR)) {
+                // 被山体/地面遮挡的航迹直接不发布，避免锁定墙后目标。
+                continue;
             }
             visible.add(track);
         }

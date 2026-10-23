@@ -19,6 +19,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -151,6 +152,22 @@ public final class RadarHudRenderer {
         g.fill(x + w - 1, y, x + w, y + h, color);
     }
 
+    /**
+     * BVR 去重判定：只有本地回波确实会被绘制（实体已加载且当前模式接受其实时类别）时，
+     * 才隐藏同名 BVR 航迹；否则（如落地幻翼在 SRC PD 被判 GROUND）继续用航迹显示，
+     * 避免视距内目标被去重逻辑整条吃掉。
+     */
+    private static boolean localEchoVisible(Minecraft mc, @Nullable RadarEcho echo,
+                                            int nowTick, boolean twsOnlyAir) {
+        if (echo == null || echo.expired(nowTick)) return false;
+        Entity entity = mc.level == null ? null : mc.level.getEntity(echo.entityId);
+        if (entity == null || !entity.isAlive()) return false;
+        RadarTargetClass liveClass = RadarCore.classify(entity);
+        if (liveClass == null || !RadarHud.currentMode.accepts(liveClass)) return false;
+        if (twsOnlyAir && liveClass != RadarTargetClass.AIR) return false;
+        return true;
+    }
+
     private static void drawContacts(GuiGraphics g, int px, int py, int size) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
@@ -242,7 +259,7 @@ public final class RadarHudRenderer {
             if (track.kind() == BvrKind.MISSILE
                     && mc.player.getUUID().equals(track.ownerUuid())) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
-            if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
+            if (localEchoVisible(mc, bvrShadow, nowTick, false)) continue;
             RadarTargetClass bvrClass = switch (track.kind()) {
                 case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
                 case SURFACE -> RadarTargetClass.SEA;
@@ -352,7 +369,7 @@ public final class RadarHudRenderer {
             if (mc.player.getUUID().equals(track.uuid())) continue;
             if (track.kind() != BvrKind.PLAYER && track.kind() != BvrKind.AI) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
-            if (bvrShadow != null && !bvrShadow.expired(nowTick)) continue;
+            if (localEchoVisible(mc, bvrShadow, nowTick, true)) continue;
             // 波束涂抹记忆：只显示被扫描波束扫过的航迹；锁定目标保持实时位置。
             boolean lockedBvr = RadarHud.isLockedTarget(track.uuid());
             BvrState.Paint paint = BvrState.painted(track.uuid());
@@ -528,47 +545,39 @@ public final class RadarHudRenderer {
         tx = Math.max(px + 3, Math.min(px + size - 4, tx));
         ty = Math.max(py + 12, Math.min(py + size - 4, ty));
 
-        if (!lineVisible) {
-            // 取消锁定/回到搜索模式：只显示惯性导航目标圆圈，不主动复锁。
-            drawCircle(g, tx, ty, Math.max(4, (int) Math.round(size * 0.017)), AMBER);
-            g.fill(tx - 2, ty, tx + 3, ty + 1, AMBER);
-            g.fill(tx, ty - 2, tx + 1, ty + 3, AMBER);
-            return;
-        }
-
         float[] missile = RadarHud.project((float) RadarHud.guidanceMissileAzimuthDeg,
                 RadarHud.guidanceMissileDistance, range, size);
-        int ox = px + (int) missile[0];
-        int oy = py + (int) missile[1];
-        if (ox < px + 2 || ox > px + size - 3 || oy < py + 12 || oy > py + size - 3) {
-            return;
-        }
+        int ox = Math.max(px + 3, Math.min(px + size - 4, px + (int) missile[0]));
+        int oy = Math.max(py + 12, Math.min(py + size - 4, py + (int) missile[1]));
         double gapFraction = -1;
         if (RadarHud.guidanceIsArh && RadarHud.guidancePitbullRange > 0
                 && RadarHud.guidanceTargetDistance > RadarHud.guidancePitbullRange) {
             gapFraction = (RadarHud.guidanceTargetDistance - RadarHud.guidancePitbullRange)
                     / RadarHud.guidanceTargetDistance;
         }
+        // 失锁后仍画到最后已知/惯性位置（暗一档），不再只留琥珀圈。
+        int lineColor = lineVisible ? 0xAA44FF44 : 0x88777744;
         for (int i = 0; i <= 50; i++) {
             double frac = i / 50.0;
             if (gapFraction >= 0 && Math.abs(frac - gapFraction) < 0.035) continue;
             int x = (int) Math.round(ox + (tx - ox) * frac);
             int y = (int) Math.round(oy + (ty - oy) * frac);
-            g.fill(x, y, x + 1, y + 1, 0xAA44FF44);
+            g.fill(x, y, x + 1, y + 1, lineColor);
         }
 
-        // 实时导弹位置（本地实体或 BVR 数据链航迹）
+        // 实时导弹位置（本地实体或 BVR 数据链航迹），出面板时贴边显示。
         if (RadarHud.guidanceMissileId >= 0 || RadarHud.guidanceMissileUuid != null) {
-            float[] m = RadarHud.project((float) RadarHud.guidanceMissileAzimuthDeg,
-                    RadarHud.guidanceMissileDistance, range, size);
-            int mx = px + (int) m[0];
-            int my = py + (int) m[1];
-            if (mx >= px + 2 && mx <= px + size - 3 && my >= py + 12 && my <= py + size - 3) {
-                g.fill(mx - 2, my - 2, mx + 3, my + 3, WHITE);
-                g.fill(mx - 1, my - 3, mx + 2, my + 4, WHITE);
-            }
+            g.fill(ox - 2, oy - 2, ox + 3, oy + 3, WHITE);
+            g.fill(ox - 1, oy - 3, ox + 2, oy + 4, WHITE);
         }
-        drawCircle(g, tx, ty, Math.max(3, (int) Math.round(size * 0.012)), GREEN);
+        if (lineVisible) {
+            drawCircle(g, tx, ty, Math.max(3, (int) Math.round(size * 0.012)), GREEN);
+        } else {
+            // 取消锁定/回到搜索模式：只显示惯性导航目标圆圈，不主动复锁。
+            drawCircle(g, tx, ty, Math.max(4, (int) Math.round(size * 0.017)), AMBER);
+            g.fill(tx - 2, ty, tx + 3, ty + 1, AMBER);
+            g.fill(tx, ty - 2, tx + 1, ty + 3, AMBER);
+        }
     }
 
     private static void drawDashedLine(GuiGraphics g, int x1, int y1, int x2, int y2, int color) {
@@ -971,8 +980,8 @@ public final class RadarHudRenderer {
         }
 
         double half = RadarHud.effectiveScanHalfDeg();
-        int x0 = scanScreenX(RadarHud.scanAzimuthOffsetDeg - half, w);
-        int x1 = scanScreenX(RadarHud.scanAzimuthOffsetDeg + half, w);
+        int x0 = azToScreenX(RadarHud.scanAzimuthOffsetDeg - half, w, h);
+        int x1 = azToScreenX(RadarHud.scanAzimuthOffsetDeg + half, w, h);
         int yTop = elToScreenY(RadarHud.scanElevationOffsetDeg
                 + RadarHud.effectiveScanElevationHalfDeg(), w, h);
         int yBot = elToScreenY(RadarHud.scanElevationOffsetDeg
@@ -982,7 +991,7 @@ public final class RadarHudRenderer {
         yTop = Math.max(2, Math.min(h - 4, yTop));
         yBot = Math.max(2, Math.min(h - 4, yBot));
 
-        int hx = scanScreenX(RadarHud.sweepAzimuthDeg, w);
+        int hx = azToScreenX(RadarHud.sweepAzimuthDeg, w, h);
         int hy = elToScreenY(RadarHud.sweepElevationDeg, w, h);
         hx = Math.max(x0, Math.min(x1, hx));
         hy = Math.max(yTop, Math.min(yBot, hy));
@@ -1339,38 +1348,76 @@ public final class RadarHudRenderer {
     }
 
     private static void drawLaunchAssessment(GuiGraphics g, int px, int py, int size) {
-        if (!RadarHud.radarOn || !RadarHud.locked
-                || RadarHud.selectedSpec == null) return;
+        if (!RadarHud.radarOn || RadarHud.selectedSpec == null) return;
+        // 发射包线只在 TWS 软跟 / TRK 跟踪视图显示（战雷式）。
+        if (RadarHud.currentMode != RadarMode.TWS
+                && RadarHud.currentMode != RadarMode.STT) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
         int right = px + size - 4;
         int top = py + 14;
         int bottom = py + size - 4;
-        int yTarget = bottom - (int) Math.min(1.0, RadarHud.lockedDistance / range * (bottom - top));
-        double specMax = Math.max(RadarHud.selectedSpec.maxDistance, 1.0);
-        double scale = Math.min(1.0, range / specMax);
-        double max = specMax * scale;
-        double nezMin;
-        double nezMax;
-        double minManeuver;
-        switch (RadarHud.selectedSpec.guidance) {
-            case IR -> { nezMin = 800; nezMax = 4500; minManeuver = 300; }
-            case SARH -> { nezMin = 4000; nezMax = 16000; minManeuver = 1500; }
-            default -> { nezMin = 3000; nezMax = 22000; minManeuver = 800; }
+        int plot = bottom - top;
+
+        MissileSpec spec = RadarHud.selectedSpec;
+        double rMax = Math.max(spec.maxDistance, 1.0);
+
+        // 目标距离/速度：TWS 软跟优先，其次本地/BVR 锁定目标。
+        double targetDistance = -1;
+        double targetSpeed = 0;
+        if (RadarHud.currentMode == RadarMode.TWS) {
+            TwsTrack track = TwsTrackManager.selected();
+            if (track != null) {
+                targetDistance = track.range;
+                targetSpeed = track.velocity.length() * 20.0;
+            }
         }
-        nezMin *= scale;
-        nezMax *= scale;
-        minManeuver *= scale;
-        int yMax = bottom - (int) Math.min(1.0, max / range * (bottom - top));
-        int yNezTop = bottom - (int) Math.min(1.0, nezMax / range * (bottom - top));
-        int yNezBottom = bottom - (int) Math.min(1.0, nezMin / range * (bottom - top));
-        int yMin = bottom - (int) Math.min(1.0, minManeuver / range * (bottom - top));
-        int color = RadarHud.lockedDistance <= max ? GREEN : AMBER;
-        g.fill(right - Math.max(30, size / 4), yTarget, right, yTarget + 1, color);
-        g.fill(right - Math.max(18, size / 6), yMax, right, yMax + 1, GREEN);
-        g.fill(right, yNezTop, right + 1, yNezBottom, 0xFF6BFF6B);
-        g.fill(right - Math.max(12, size / 8), yNezTop, right + 2, yNezTop + 1, 0xFF6BFF6B);
-        g.fill(right - Math.max(12, size / 8), yNezBottom, right + 2, yNezBottom + 1, 0xFF6BFF6B);
-        g.fill(right - Math.max(16, size / 6), yMin, right, yMin + 1, 0xFF6BFF6B);
+        if (targetDistance < 0 && RadarHud.lockedTargetUuid != null) {
+            targetDistance = RadarHud.lockedDistance;
+            if (RadarHud.lockedEntity != null) {
+                targetSpeed = RadarHud.lockedEntity.getDeltaMovement().length() * 20.0;
+            } else {
+                TrackedTarget tracked = TargetRegistry.find(
+                        RadarHud.lockedTargetUuid, mc.player, mc.player.tickCount);
+                if (tracked != null) targetSpeed = tracked.velocity().length() * 20.0;
+            }
+        }
+
+        // NEZ：按发动机理想末速（真空 Δv）与目标速度动态估算。
+        double vBurn = spec.idealBurnoutSpeed();
+        double vt = Math.max(0.0, targetSpeed);
+        double vRatio = Math.max(0.15, Math.min(0.9, (vBurn - vt) / Math.max(vBurn, 1.0)));
+        double nezMax = rMax * vRatio;
+        double nezMin = Math.max(10.0, rMax * 0.05 + vt * 0.5);
+        nezMax = Math.min(nezMax, rMax * 0.95);
+        nezMax = Math.max(nezMax, nezMin + 10.0);
+        double minRange = switch (spec.guidance) {
+            case IR -> 300.0;
+            case SARH -> 1500.0;
+            default -> 800.0;
+        };
+
+        int yTarget = bottom - (int) Math.min(1.0, Math.max(0.0, targetDistance) / range * plot);
+        int yMax = bottom - (int) Math.min(1.0, rMax / range * plot);
+        int yNezTop = bottom - (int) Math.min(1.0, nezMax / range * plot);
+        int yNezBottom = bottom - (int) Math.min(1.0, nezMin / range * plot);
+        int yMin = bottom - (int) Math.min(1.0, minRange / range * plot);
+
+        // 统一绿色：不可命中不缩短、不变色。
+        int targetLen = Math.max(24, size / 10);
+        int maxLen = Math.max(20, size * 8 / 100);
+        int minLen = Math.max(16, size * 6 / 100);
+        int nezCap = Math.max(12, size * 6 / 100);
+        if (targetDistance > 0) {
+            g.fill(right - targetLen, yTarget, right, yTarget + 1, GREEN);
+        }
+        g.fill(right - maxLen, yMax, right, yMax + 1, GREEN);
+        g.fill(right, yNezTop, right + 1, yNezBottom, GREEN);
+        g.fill(right - nezCap, yNezTop, right + 2, yNezTop + 1, GREEN);
+        g.fill(right - nezCap, yNezBottom, right + 2, yNezBottom + 1, GREEN);
+        g.fill(right - minLen, yMin, right, yMin + 1, GREEN);
     }
 
     private static void drawControlButtons(GuiGraphics g, int px, int py, int size, float ui) {
@@ -1498,19 +1545,14 @@ public final class RadarHudRenderer {
         }
     }
 
-    /** 扫描线使用线性方位映射，保证 ±120° 以内不会因 tan() 翻转。 */
-    private static int scanScreenX(double az, int screenW) {
-        double clamped = Math.max(-RadarHud.PANEL_AZIMUTH_DEG,
-                Math.min(RadarHud.PANEL_AZIMUTH_DEG, az));
-        return (int) Math.round(screenW / 2.0 + clamped / RadarHud.PANEL_AZIMUTH_DEG * screenW / 2.0);
-    }
-
+    /** 视角投影：方位角 → 屏幕 x（相机 FOV 透视，±85° 内安全）。 */
     private static int azToScreenX(double az, int screenW, int screenH) {
         Minecraft mc = Minecraft.getInstance();
+        double clamped = Math.max(-85.0, Math.min(85.0, az));
         double fovY = Math.toRadians(Math.max(30, mc.options.fov().get()));
         double tanV = Math.tan(fovY / 2);
         double tanH = tanV * (double) screenW / screenH;
-        return (int) (screenW / 2.0 + Math.tan(Math.toRadians(az)) / tanH * (screenW / 2.0));
+        return (int) (screenW / 2.0 + Math.tan(Math.toRadians(clamped)) / tanH * (screenW / 2.0));
     }
 
     private static int elToScreenY(double el, int screenW, int screenH) {

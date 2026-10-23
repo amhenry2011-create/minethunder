@@ -88,7 +88,7 @@ public final class ServerRadarState {
                 player.serverLevel().getGameTime(), safeQuality, bvrUuid));
     }
 
-    /** BVR 远程锁定：仅 AIR 类别，同一维度，全员可锁定距离内。 */
+    /** BVR 远程锁定：同一维度、距离合法、无地形遮挡（弹种由发射时校验，不限 AIR）。 */
     private static boolean validateBvrTarget(ServerPlayer player, @Nullable UUID bvrTargetUuid,
                                              ResourceKey<Level> dimension) {
         if (bvrTargetUuid == null) return false;
@@ -96,7 +96,12 @@ public final class ServerRadarState {
         Entity entity = player.serverLevel().getEntity(bvrTargetUuid);
         if (entity == null || !entity.isAlive()) return false;
         if (!dimension.equals(player.serverLevel().dimension())) return false;
-        if (RadarCore.classify(entity) != RadarTargetClass.AIR) return false;
+        RadarTargetClass targetClass = RadarCore.classify(entity);
+        if (targetClass == null) return false;
+        if (RadarCore.isOccludedForTarget(player.serverLevel(), player.getEyePosition(),
+                entity.getBoundingBox().getCenter(), targetClass)) {
+            return false;
+        }
         double distance = player.distanceTo(entity);
         return distance > BVR_LOCK_MIN_RANGE && distance <= BVR_LOCK_RANGE;
     }
@@ -160,19 +165,19 @@ public final class ServerRadarState {
     }
 
     /**
-     * 半主动雷达弹：硬锁定并到红色倒计时环（TRACKING）以上为常规照射；
-     * BVR 远程软锁（targetId<0 且 bvrTargetUuid 挂链）由载机扫描波束持续
-     * 照射目标，等同 STT 照射放行。
+     * 半主动雷达弹：常规照射要求硬锁定 + 红色倒计时环（TRACKING）以上；
+     * BVR 远程软锁同样要求导引头达到 TRACKING 以上才放行。
      */
     public static boolean canLaunchSarh(Player player) {
         LockState state = get(player);
         if (state == null || !state.radarOn()) return false;
         if (state.dimension() == null
                 || !state.dimension().equals(player.level().dimension())) return false;
-        if (!state.hardLock() && state.targetId() < 0
-                && state.bvrTargetUuid() != null) return true;
-        return state.hardLock()
-                && state.seekerState() >= SeekerLockModel.State.TRACKING.ordinal();
+        if (state.seekerState() < SeekerLockModel.State.TRACKING.ordinal()) return false;
+        if (state.targetId() < 0) {
+            return state.bvrTargetUuid() != null;
+        }
+        return state.hardLock();
     }
 
     public static void clear(Player player) {

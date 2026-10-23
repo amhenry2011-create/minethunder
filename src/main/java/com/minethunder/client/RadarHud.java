@@ -38,8 +38,9 @@ public final class RadarHud {
     public static boolean radarOn = true;
     /** 雷达导引头是否开启（Alt+X 切换） */
     public static boolean seekerEnabled = false;
-    /** 面板方位显示范围（±120°），不再等于最大搜索宽度 */
-    public static final double PANEL_AZIMUTH_DEG = 120.0;
+    /** 面板方位显示范围（±60°，铺满面板）；TRK/TWS 跟踪视图满宽 |
+     *  搜索档位按实际波束宽度在面板内左右留出暗带。 */
+    public static final double PANEL_AZIMUTH_DEG = 60.0;
     /** 距离档位：Q/Alt+Q 循环 */
     public static final double[] RANGES = {40, 100, 300, 600, 1000};
     public static int rangeIndex = 2;
@@ -283,6 +284,8 @@ public final class RadarHud {
     /** 导弹发射后的雷达面板引导线 */
     public static boolean guidanceLineActive = false;
     public static int guidanceTargetId = -1;
+    /** IR 发射瞬间记录的热源目标实体 ID，供 startGuidanceLine 选用（IR 无雷达目标）。 */
+    public static int pendingGuidanceTargetId = -1;
     public static int guidanceMissileId = -1;
     @Nullable
     public static UUID guidanceMissileUuid = null;

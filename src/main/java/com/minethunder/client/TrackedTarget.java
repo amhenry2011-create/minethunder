@@ -65,9 +65,19 @@ public final class TrackedTarget {
                 ? scanPos : Minecraft.getInstance().player.getEyePosition())
                 : paint.range();
         int lastPaint = paint == null ? -1 : paint.lastPaintTick();
+        // BVR 目标同时被客户端加载时挂上本地实体（IR 热源校验/精确位置可用）。
+        Entity local = null;
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            Entity candidate = level.getEntity(track.entityId());
+            if (candidate != null && candidate.isAlive()
+                    && candidate.getUUID().equals(track.uuid())) {
+                local = candidate;
+            }
+        }
         return new TrackedTarget(track.uuid(), TargetSource.BVR, targetClass,
                 track.entityId(), scanPos, scanRange, lastPaint,
-                null, null, track, paint);
+                local, null, track, paint);
     }
 
     public boolean isLocal() {
