@@ -413,7 +413,7 @@ public final class KeyInputHandler {
             }
             if (!RadarHud.seekerModel.canLaunchSarh()) {
                 notifyClient(mc, Component.literal(
-                        "SARH 需硬锁定并等待红色倒计时环"));
+                        "SARH 需锁定并等待红色倒计时环"));
                 return;
             }
         }

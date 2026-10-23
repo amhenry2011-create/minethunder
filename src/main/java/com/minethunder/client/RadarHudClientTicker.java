@@ -350,7 +350,11 @@ public final class RadarHudClientTicker {
         }
         boolean bvrLock = RadarHud.isBvrLock() && RadarHud.lockedTargetUuid != null;
         int targetId = target == null ? -1 : target.getId();
-        int state = RadarHud.seekerEnabled && RadarHud.hasActiveLockTarget()
+        // TWS 软跟踪也算锁定来源：导引头环状态同样上报，服务端据此放行 SARH。
+        boolean twsSoftTrack = RadarHud.currentMode == RadarMode.TWS
+                && TwsTrackManager.selected() != null;
+        int state = RadarHud.seekerEnabled
+                && (RadarHud.hasActiveLockTarget() || twsSoftTrack)
                 ? RadarHud.seekerModel.state().ordinal() : -1;
         int mode = RadarHud.currentMode.ordinal();
         float quality = 0f;

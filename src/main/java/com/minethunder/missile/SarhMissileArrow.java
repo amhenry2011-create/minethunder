@@ -1,6 +1,7 @@
 package com.minethunder.missile;
 
 import com.minethunder.radar.RadarCore;
+import com.minethunder.radar.RadarMode;
 import com.minethunder.radar.ServerRadarState;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.Entity;
@@ -10,8 +11,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * 半主动雷达弹（类似 AIM-7）：依赖发射方持续雷达照射（STT）。
- * 目标由发射方雷达提供；照射中断后惯性飞行（IOG），不自爆。
+ * 半主动雷达弹（类似 AIM-7）：依赖发射方持续雷达照射。
+ * 照射来源：STT 硬锁或 TWS 软跟踪同一目标（软跟踪也算锁定），
+ * 或 BVR 远程软锁当作持续照射。照射中断后惯性飞行（IOG），不自爆。
  */
 public class SarhMissileArrow extends MissileArrow {
     /** 发射方玩家 UUID */
@@ -64,7 +66,8 @@ public class SarhMissileArrow extends MissileArrow {
             }
             return loseIllumination();
         }
-        // SARH：发射方须保持 STT 照射，或以 BVR 远程软锁当作持续照射，否则失锁
+        // SARH：发射方须保持对同一目标的照射（STT 硬锁或 TWS 软跟踪），
+        // 或以 BVR 远程软锁当作持续照射，否则失锁
         if (shooterId == null) return loseIllumination();
         Player shooter = level().getPlayerByUUID(shooterId);
         if (shooter == null) return loseIllumination();
@@ -74,9 +77,12 @@ public class SarhMissileArrow extends MissileArrow {
 
         Vec3 eye = shooter.getEyePosition();
         Vec3 targetPos = target.getBoundingBox().getCenter();
-        boolean sttIllumination = ServerRadarState.isLocked(shooter, target.getId());
+        ServerRadarState.LockState lock = ServerRadarState.get(shooter);
+        boolean trackIllumination = lock != null && lock.radarOn()
+                && lock.targetId() == target.getId()
+                && (lock.hardLock() || lock.radarMode() == RadarMode.TWS.ordinal());
         boolean bvrIllumination = bvrSoftIlluminated(shooter, target);
-        boolean nowIlluminated = (sttIllumination || bvrIllumination)
+        boolean nowIlluminated = (trackIllumination || bvrIllumination)
                 && shooter.level() == target.level()
                 && shooter.distanceTo(target) <= spec.maxDistance
                 && !RadarCore.isOccludedForTarget(shooter.level(), eye, targetPos,

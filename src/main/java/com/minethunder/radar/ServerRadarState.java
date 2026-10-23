@@ -165,7 +165,7 @@ public final class ServerRadarState {
     }
 
     /**
-     * 半主动雷达弹：常规照射要求硬锁定 + 红色倒计时环（TRACKING）以上；
+     * 半主动雷达弹：TWS 软跟踪与硬锁定都算锁定，均要求红色倒计时环（TRACKING）以上；
      * BVR 远程软锁同样要求导引头达到 TRACKING 以上才放行。
      */
     public static boolean canLaunchSarh(Player player) {
@@ -177,7 +177,7 @@ public final class ServerRadarState {
         if (state.targetId() < 0) {
             return state.bvrTargetUuid() != null;
         }
-        return state.hardLock();
+        return state.hardLock() || state.radarMode() == RadarMode.TWS.ordinal();
     }
 
     public static void clear(Player player) {

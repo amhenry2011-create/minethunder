@@ -37,6 +37,12 @@ public final class SeekerLockModel {
      */
     private static final double INSTANT_QUALITY = 0.90;
 
+    /**
+     * 锁定成立后的信号质量下限（保底）：离轴/距离/接近率只影响填充速度，
+     * 任何锁定（硬锁 / TWS / BVR）都能走完白/红环阶段并发射，不会被卡在 SEARCHING。
+     */
+    private static final double LOCKED_QUALITY_FLOOR = 0.5;
+
     private State state = State.SEARCHING;
     private double progress;
     private double stability;
@@ -122,6 +128,8 @@ public final class SeekerLockModel {
 
         quality = clamp(0.45 * angleMargin + 0.25 * rangeMargin
                 + 0.15 * closureQuality + 0.15 * notchQuality, 0.0, 1.0);
+        // 锁定即可推进：保底质量保证大离轴/远距离/低接近率也能走完白/红环。
+        quality = Math.max(quality, LOCKED_QUALITY_FLOOR);
 
         inEnvelope = range <= spec.maxDistance && quality >= EXIT_QUALITY;
 

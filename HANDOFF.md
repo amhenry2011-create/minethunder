@@ -35,13 +35,23 @@
 - 服务端 `MissileFirePacket` 删除 FOV 锥校验与雷达扫描锥校验；保留雷达开启、锁定目标存活、射程、地形遮挡、环阶段（ARH 白弧以上 / SARH 红弧以上）校验。
 - 环阶段门限保持不变：ARH 白弧以上、SARH 红弧以上；离轴不限。
 
+### 补丁 0.1.5：锁定即可推进 + TWS 软跟踪算锁定（用户澄清）
+- 背景：0.1.4 后大离轴发射仍被拒（ARH 提示“导引头未对准目标”，实际是质量 < 0.12 卡在 SEARCHING）。
+- `SeekerLockModel`：新增 `LOCKED_QUALITY_FLOOR = 0.5`——锁定成立后质量有保底，离轴/距离/接近率只影响填充速度与 HIGH 判定；ARH 白弧约 1 秒内、SARH 红弧约 2 秒内必然达到。
+- TWS 软跟踪算锁定（用户确认）：
+  - `ServerRadarState.canLaunchSarh`：本地目标从“仅硬锁”改为“硬锁或 TWS 模式”。
+  - `RadarHudClientTicker.syncRadarState`：TWS 选中目标时同样上报导引头环状态（此前只上报硬锁/BVR）。
+  - `SarhMissileArrow.resolveTarget`：照射来源从“STT 硬锁 / BVR”扩展为“STT 硬锁 / TWS 同一目标 / BVR”，TWS 发射后可持续制导。
+- 客户端提示文案：“SARH 需硬锁定并等待红色倒计时环”→“SARH 需锁定并等待红色倒计时环”。
+- 遗留（未动）：旧弓发射路径 `MissileEvents.onArrowLoose` 仍保留 ±90°/40° 扫描校验与环阶段校验。
+
 ### 待办/下次优先
 - 实机：600/1000 档扫视距内目标（含落地幻翼靶）应显示且可 Alt+F 锁；BVR 锁→SARH 发射需红弧进度。
-- 实机：雷达弹任意离轴（只要有锁定）均可发射：ARH 白弧、SARH 红弧满足即可，服务端不再拒绝离轴/扫描角。
+- 实机：雷达弹任意离轴（锁定即推进）：ARH 保持 0.5s 后白弧即可发射；SARH 红弧即可发射（含 TWS 软跟踪发射 SARH 并持续制导）。
 - 实机：IR 无雷达辅助时必须把小圈对准热源才能锁；有雷达辅助时小圈牵引照旧。
 - 实机：高速载机发射不再急停；SARH/ARH 燃尽滑翔速度平滑；失锁后导弹继续 IOG 不空中自爆。
 - 实机：面板 ±60 铺满无暗带；扫描线在 FOV 70/110 下与视图对齐；包线仅在 TWS/TRK 出现。
-- 数值微调入口：`MissileSpecs` endSpeed/timeLife、`drawLaunchAssessment` 线长与最小射程、`SeekerLockModel.INSTANT_QUALITY`。
+- 数值微调入口：`MissileSpecs` endSpeed/timeLife、`drawLaunchAssessment` 线长与最小射程、`SeekerLockModel.INSTANT_QUALITY`/`LOCKED_QUALITY_FLOOR`。
 
 ## 2026-10-23 五轮：统一目标抽象 + BVR 发射同步/反馈 + ARH 放宽（上一轮）
 
