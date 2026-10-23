@@ -64,7 +64,7 @@ public class SarhMissileArrow extends MissileArrow {
             }
             return loseIllumination();
         }
-        // SARH：发射方必须保持 STT 锁定，否则失锁
+        // SARH：发射方须保持 STT 照射，或以 BVR 远程软锁当作持续照射，否则失锁
         if (shooterId == null) return loseIllumination();
         Player shooter = level().getPlayerByUUID(shooterId);
         if (shooter == null) return loseIllumination();
@@ -74,7 +74,9 @@ public class SarhMissileArrow extends MissileArrow {
 
         Vec3 eye = shooter.getEyePosition();
         Vec3 targetPos = target.getBoundingBox().getCenter();
-        boolean nowIlluminated = ServerRadarState.isLocked(shooter, target.getId())
+        boolean sttIllumination = ServerRadarState.isLocked(shooter, target.getId());
+        boolean bvrIllumination = bvrSoftIlluminated(shooter, target);
+        boolean nowIlluminated = (sttIllumination || bvrIllumination)
                 && shooter.level() == target.level()
                 && shooter.distanceTo(target) <= spec.maxDistance
                 && !RadarCore.isOccludedForTarget(shooter.level(), eye, targetPos,
@@ -85,6 +87,12 @@ public class SarhMissileArrow extends MissileArrow {
             return target;
         }
         return loseIllumination();
+    }
+
+    /** BVR 远程软锁充当照射：当前锁目标 uuid 与目标一致即视为载机波束持续照射。 */
+    private boolean bvrSoftIlluminated(Player shooter, Entity target) {
+        java.util.UUID bvrUuid = ServerRadarState.getBvrTargetUuid(shooter);
+        return bvrUuid != null && bvrUuid.equals(target.getUUID());
     }
 
     private Entity loseIllumination() {

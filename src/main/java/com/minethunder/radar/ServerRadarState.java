@@ -190,14 +190,19 @@ public final class ServerRadarState {
         return state.radarMode() == RadarMode.TWS.ordinal() || state.hardLock();
     }
 
-    /** 半主动雷达弹：必须硬锁定，并到红色倒计时环（TRACKING）或红色双环（HIGH）。 */
+    /**
+     * 半主动雷达弹：硬锁定并到红色倒计时环（TRACKING）以上为常规照射；
+     * BVR 远程软锁（targetId<0 且 bvrTargetUuid 挂链）由载机扫描波束持续
+     * 照射目标，等同 STT 照射放行。
+     */
     public static boolean canLaunchSarh(Player player) {
         LockState state = get(player);
-        return state != null
-                && state.radarOn()
-                && state.hardLock()
-                && state.dimension() != null
-                && state.dimension().equals(player.level().dimension())
+        if (state == null || !state.radarOn()) return false;
+        if (state.dimension() == null
+                || !state.dimension().equals(player.level().dimension())) return false;
+        if (!state.hardLock() && state.targetId() < 0
+                && state.bvrTargetUuid() != null) return true;
+        return state.hardLock()
                 && state.seekerState() >= SeekerLockModel.State.TRACKING.ordinal();
     }
 

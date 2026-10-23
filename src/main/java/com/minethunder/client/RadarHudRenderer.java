@@ -286,7 +286,8 @@ public final class RadarHudRenderer {
                     case MISSILE -> RadarIconType.MISSILE;
                     case SURFACE -> RadarIconType.BLOCK;
                 };
-                int color = alphaColor(isLockedBvr ? WHITE : GREEN, isLockedBvr ? 1f : 0.8f);
+                float bvrAlpha = isLockedBvr ? 1f : bvrEchoAlpha(velocity, toBvr, dist);
+                int color = alphaColor(isLockedBvr ? WHITE : GREEN, bvrAlpha);
                 drawContactIcon(g, bx, by, icon, color);
                 drawMotionVector(g, mc, velocity, predicted, bx, by,
                         Math.max(6, (int) Math.round(size * 0.03)), color);
@@ -298,8 +299,9 @@ public final class RadarHudRenderer {
                     g.fill(bx - 2, by - 2, bx + 3, by + 3, color);
                     g.fill(bx - 1, by - 3, bx + 2, by + 4, color);
                 } else {
+                    float bvrAlpha = bvrEchoAlpha(velocity, toBvr, dist);
                     g.fill(bx - shortLen / 2, by - thick / 2,
-                            bx + shortLen / 2, by + thick / 2 + 1, alphaColor(GREEN, 0.8f));
+                            bx + shortLen / 2, by + thick / 2 + 1, alphaColor(GREEN, bvrAlpha));
                 }
             }
         }
@@ -364,10 +366,20 @@ public final class RadarHudRenderer {
             int by = py + size - (int) (dist / range * size);
             if (bx < px + 2 || bx >= px + size - 2 || by < py + 12
                     || by >= py + size - 2) continue;
-            int color = alphaColor(lockedBvr ? WHITE : GREEN, lockedBvr ? 1f : 0.7f);
+            float bvrAlpha = lockedBvr ? 1f : bvrEchoAlpha(velocity, toBvr, dist);
+            int color = alphaColor(lockedBvr ? WHITE : GREEN, bvrAlpha);
             drawFilledCircle(g, bx, by, lockedBvr ? 3 : 2, color);
             drawHeadingLine(g, mc, velocity, bx, by, color);
         }
+    }
+
+    /** BVR 点亮度与本地接触同规：按相对径向速度（notch）调制，无盲区时保持原基础亮度。 */
+    private static float bvrEchoAlpha(Vec3 velocity, Vec3 toBvr, double dist) {
+        double radial = velocity.subtract(Minecraft.getInstance().player.getDeltaMovement())
+                .scale(20.0).dot(toBvr.normalize());
+        double severity = RadarCore.notchSeverity(radial, dist, RadarHud.currentMode);
+        if (severity == 0.0) return 0.7f;
+        return Math.max(0.25f, 1f - (float) severity * 0.65f);
     }
 
     private static void drawHeadingLine(GuiGraphics g, Minecraft mc, Vec3 heading,
@@ -1171,10 +1183,9 @@ public final class RadarHudRenderer {
         if (RadarHud.seekerMessage == null || RadarHud.seekerMessage.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
         float ui = Math.max(0.55f, HudScale.factor(w, h));
-        int color = RadarHud.seekerActive || RadarHud.seekerEnabled ? GREEN : AMBER;
         g.drawString(mc.font, RadarHud.seekerMessage,
-                w / 2 - mc.font.width(RadarHud.seekerMessage) / 2,
-                h - Math.max(22, Math.round(118 * ui)), color, false);
+                Math.round(24 * ui),
+                h - Math.round(22 * ui), 0xFFFFFFFF, false);
     }
 
     private static void renderMissileOutcome(GuiGraphics g, int w, int h) {

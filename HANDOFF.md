@@ -1,9 +1,27 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-23
-状态：BVR 闪断排查修复（注册表保活 + 状态命令）+ 雪球/投射物可锁定 + ACM 三波束模式 + IR 锁太阳小环径向钳制。已构建待实测。
+状态：BVR 消息行修复（双排重复消除、白字左下）+ BVR 弹种放宽 SARH+ARH + BVR 涂抹/锁定与本地扫描全面同规。已构建待实测。
 
-## 2026-10-23 BVR 闪断 + 投射物锁定 + ACM 三波束 + IR 环修正（最新）
+## 2026-10-23 三轮：消息行/SARH 入 BVR/涂抹同规/导弹强加载（最新）
+
+### 用户反馈与决议
+- “按 Alt+F 没反应，屏幕又出现两排相同文字” → 双排=外置白名单又走一遍 `displayClientMessage` 与 HUD 行重复渲染；按用户要求**不去白名单**，只去掉重复的 actionbar 渲染；消息行改白色、放左下角右移一点。
+- “超视距空战半主动雷达弹也可以干啊” → BVR 弹种从仅 ARH 放宽为 SARH/ARH（IR 仍只走本地热源）。
+- “令所有导弹强加载” → 导弹（MissileArrow 及子类）field ticket 一律持票不再受 64 上限，远离玩家的标签远景目标仍限 64。
+
+### 本轮改动
+1. **消息行**：`notifyClient` 白名单分支变 no-op（信息只出现在 HUD 行）；`renderSeekerMessage` 改白色（0xFFFFFFFF）、x=`24*ui`（左下角右移）、y=`h-22*ui`。
+2. **SARH 参与 BVR**：`beginBvrLockAcquisition` 拒 IR 提示「远程锁定需雷达弹：请切换弹种」；`KeyInputHandler` 发射路径 `radarGuided`（SARH/ARH）共享 `bvrLock/bvrUuid`，SARH 有远程 TRK 时只需导引头开机 ≥10 tick（本地硬锁路径不变）；`ServerRadarState.canLaunchSarh` 增加 BVR 远程软锁放行分支；`SarhMissileArrow.resolveTarget` 照射条件加 BVR 软锁 uuid 命中（远程 TRK=持续照射），射程/遮挡照常。
+3. **BVR 涂抹与锁定同规**：`updateBvrPaints` 加视线遮挡剔除（目标可本地追踪时）与 GMI 水平速度门（`GMI_MIN_HORIZONTAL_SPEED`）；渲染两处 BVR 点亮度按相对径向速度 notch 调制（`bvrEchoAlpha`，与本地接触同公式、无盲区基线 0.7）；`tickBvrAcquisition` ACQ 期要求涂抹保鲜（`scanFrameTicks()+LOCK_ACQUIRE_TICKS+20`，失败「远程尝试锁定失败」，与本地 ACQ 同规）。
+4. **导弹强加载**：`BvrTicketService.sweep` 导弹无条件 `ensure`、AI/标签目标按剩余候选槽（≤64）；溢出撤销永不撤导弹票（`MISSILE_TICKETS` 集合）。
+5. 文档：`BVR.md`（弹种/同规规则/组件表/测试）、`HANDOFF.md`。
+
+### 待办/下次优先
+- 实测：重启后 C 键切弹种 → `/minethunder test bvr start` 用 600 b 靶验证 SARH/ARH 两条 BVR 锁定与发射链路；注意 216 b 靶在客户端追踪距离内会本地优先（TWS 持续预测属于正确行为）。
+- 若仍无锁定反馈，先确认是「弹种=IR」还是「无有效回波」（本轮所有提示走 HUD 单行白字）。
+
+## 2026-10-23 BVR 闪断 + 投射物锁定 + ACM 三波束 + IR 环修正
 
 ### 用户反馈与决议
 - "生成目标成功后 src pd 模式依然没有扫描到目标" → 进一步："生成出目标雷达有一条短横线但是一瞬间就消失了" → 判定为服务端快照在最初几拍后停止包含该靶（客户端 30 tick 过期把断源放大成闪现）。轻量确诊后修复：`BvrTicketService` 曾依赖 `getAllEntities()` 枚举做 stale 判定，一次枚举遗漏即撤票→区块落地→永久丢失。

@@ -979,8 +979,8 @@ public final class RadarHudClientTicker {
     }
 
     /**
-     * 无本地回波时回退：对 BVR 远程航迹发起 ARH 数据链软锁。
-     * 仅空中目标、16..1000 格（与服务端校验一致）、仅 ARH 弹种；
+     * 无本地回波时回退：对 BVR 远程航迹发起雷达数据链软锁。
+     * 仅空中目标、16..1000 格（与服务端校验一致）、SARH/ARH 雷达弹；
      * 候选必须已被扫描波束涂抹过（BvrState.painted），与普通雷达锁定同规。
      */
     private static boolean beginBvrLockAcquisition() {
@@ -995,8 +995,9 @@ public final class RadarHudClientTicker {
             RadarHud.lastLockMessage = "无有效回波";
             return false;
         }
-        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH) {
-            RadarHud.lastLockMessage = "远程锁定仅 ARH：请切换弹种";
+        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH
+                && RadarHud.selectedMissile != MissileSpec.Guidance.SARH) {
+            RadarHud.lastLockMessage = "远程锁定需雷达弹：请切换弹种";
             return false;
         }
         Vec3 eye = mc.player.getEyePosition();
@@ -1053,6 +1054,16 @@ public final class RadarHudClientTicker {
             // 本地扫描锁定优先，静默放弃远程软锁。
             cancelBvrLock(null);
             return;
+        }
+        if (RadarHud.bvrAcquiring) {
+            // 与本地 ACQ 同规：尝试期间目标必须被扫描波束持续刷新。
+            BvrState.Paint paint = BvrState.painted(track.uuid());
+            int freshness = RadarHud.scanFrameTicks()
+                    + RadarHud.LOCK_ACQUIRE_TICKS + 20;
+            if (paint == null || tick - paint.lastPaintTick() > freshness) {
+                cancelBvrLock("远程尝试锁定失败");
+                return;
+            }
         }
         updateBvrInfo(player, track);
         RadarHud.bvrAcquireTicks++;
@@ -1432,6 +1443,7 @@ public final class RadarHudClientTicker {
     /**
      * BVR 远程航迹按普通雷达规则显示：只有当前扫描波束实际扫过其方位/仰角时
      * 建立/刷新涂抹快照；未扫到时面板保持冻结位置，超过回波记忆后消失。
+     * 视线遮挡（本地可追踪目标）与 GMI 水平速度门与本地扫描同规。
      * ACM 只做视距内自动截获，不做超视距搜索（ACM 内不涂抹 BVR）。
      * 已锁定的 BVR 目标与本机导弹数据链例外，保持连续更新（同 TRK PD 规则）。
      */
@@ -1475,6 +1487,15 @@ public final class RadarHudClientTicker {
             Vec3 to = pos.subtract(origin);
             double distance = to.length();
             if (distance <= 0.1 || distance > range) continue;
+            if (RadarHud.currentMode == RadarMode.GMI
+                    && track.velocity().horizontalDistance() * 20.0
+                            < RadarCore.GMI_MIN_HORIZONTAL_SPEED) continue;
+            Entity tracked = mc.level == null ? null : mc.level.getEntity(track.entityId());
+            if (tracked != null
+                    && RadarCore.isOccludedForTarget(mc.level, origin, pos,
+                            RadarCore.classify(tracked))) {
+                continue;
+            }
             if (Math.abs(RadarCore.azimuthBetween(beamDir, to)) > azHalf
                     || Math.abs(RadarCore.elevationBetween(beamDir, to)) > elHalf) {
                 continue;

@@ -24,8 +24,10 @@ import java.util.UUID;
 
 /**
  * 服务端区块 ticket：
- * - 导弹实体保持 5×5 实体 ticking 区块，飞出玩家加载范围后仍持续 tick，不再悬停卡空。
- * - 带 {@code minethunder_bvr} 标签的远程目标保持加载，作为 BVR 数据链航迹源。
+ * - 所有导弹实体（MissileArrow 及子类）一律持票 5×5 实体 ticking 区块、不设上限，
+ *   飞出玩家加载范围后仍持续 tick，不再悬停卡空。
+ * - 带 {@code minethunder_bvr} 标签的远程目标保持加载（上限 {@link #MAX_TICKETS}），
+ *   作为 BVR 数据链航迹源。
  * - 显式登记的目标（{@link #registerManualTarget}）按 UUID 直接续票，不依赖实体枚举结果。
  *
  * Ticket 使用 {@link TicketType#FORCED}、distance=2、forceTicks=true：
@@ -38,7 +40,7 @@ public final class BvrTicketService {
     public static final String BVR_TAG = "minethunder_bvr";
     /** ticket 半径：2 → 5×5 区块，实体 tick 级别。 */
     private static final int RADIUS = 2;
-    /** 每 tick 全服最多维护多少组 ticket（导弹优先）。 */
+    /** 每 tick 全服最多维护多少组标签远景目标 ticket；导弹一律持票、不受此上限。 */
     private static final int MAX_TICKETS = 64;
 
     private static final int SWEEP_TICKS = 5;
@@ -48,6 +50,8 @@ public final class BvrTicketService {
     private record Entry(ServerLevel level, ChunkPos center) {}
     /** entity UUID -> 当前 ticket */
     private static final Map<UUID, Entry> TICKETS = new HashMap<>();
+    /** 当前持票导弹（不受 MAX_TICKETS 上限，一律强加载）。 */
+    private static final Set<UUID> MISSILE_TICKETS = new HashSet<>();
     /** 显式登记的目标 UUID -> 连续未找到次数。 */
     private static final Map<UUID, Integer> MANUAL = new HashMap<>();
     /** 已持票实体连续未枚举到的次数；用于容忍偶发枚举失败。 */
@@ -125,10 +129,15 @@ public final class BvrTicketService {
         List<Entity> tracked = new ArrayList<>();
         tracked.addAll(missiles);
         tracked.addAll(candidates);
-        int i = 0;
+        int candidateSlots = MAX_TICKETS;
         for (Entity entity : tracked) {
-            if (i >= MAX_TICKETS) break;
-            ensure(entity, i++);
+            if (entity instanceof MissileArrow) {
+                ensure(entity);
+                continue;
+            }
+            if (candidateSlots <= 0) continue;
+            candidateSlots--;
+            ensure(entity);
         }
 
         // 已持票但本轮未枚举到的实体：先按 UUID 兜底解析，连续 STALE_SWEEPS 次失败才撤票。
@@ -139,7 +148,7 @@ public final class BvrTicketService {
             }
             Entity entity = findTrackedEntity(server, uuid);
             if (entity != null && entity.isAlive() && isTrackable(entity)) {
-                ensure(entity, 0);
+                ensure(entity);
                 TICKET_MISSES.remove(uuid);
                 continue;
             }
@@ -152,18 +161,18 @@ public final class BvrTicketService {
             }
         }
 
-        if (TICKETS.size() > MAX_TICKETS) {
-            // 超限时从最旧的开始撤销；数量极少，可接受无序撤销。
+        if (TICKETS.size() > MAX_TICKETS + MISSILE_TICKETS.size()) {
+            // 超限时从最旧的开始撤销，但永远不撤导弹票；数量极少，可接受无序撤销。
             List<UUID> overflow = new ArrayList<>(TICKETS.keySet());
             for (UUID uuid : overflow) {
-                if (TICKETS.size() <= MAX_TICKETS) break;
+                if (TICKETS.size() - MISSILE_TICKETS.size() <= MAX_TICKETS) break;
+                if (MISSILE_TICKETS.contains(uuid)) continue;
                 removeTicket(uuid);
             }
         }
     }
 
-    private static void ensure(Entity entity, int index) {
-        if (index >= MAX_TICKETS) return;
+    private static void ensure(Entity entity) {
         Entry current = TICKETS.get(entity.getUUID());
         ChunkPos now = entity.chunkPosition();
         if (current != null) {
@@ -173,12 +182,18 @@ public final class BvrTicketService {
         if (entity.level() instanceof ServerLevel level) {
             level.getChunkSource().addRegionTicket(TicketType.FORCED, now, RADIUS, now, true);
             TICKETS.put(entity.getUUID(), new Entry(level, now));
+            if (entity instanceof MissileArrow) {
+                MISSILE_TICKETS.add(entity.getUUID());
+            } else {
+                MISSILE_TICKETS.remove(entity.getUUID());
+            }
         }
     }
 
     public static void removeTicket(UUID uuid) {
         Entry entry = TICKETS.remove(uuid);
         if (entry != null) removeTicketAt(entry);
+        MISSILE_TICKETS.remove(uuid);
         TICKET_MISSES.remove(uuid);
     }
 

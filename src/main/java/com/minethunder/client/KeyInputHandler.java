@@ -379,20 +379,22 @@ public final class KeyInputHandler {
         }
 
         MissileSpec.Guidance chosen = chooseFireGuidance(mc);
-        boolean twsArh = RadarHud.currentMode == RadarMode.TWS
+        boolean twsSoft = RadarHud.currentMode == RadarMode.TWS
                 && TwsTrackManager.selected() != null;
-        boolean bvrLock = chosen == MissileSpec.Guidance.ARH
+        boolean radarGuided = chosen == MissileSpec.Guidance.ARH
+                || chosen == MissileSpec.Guidance.SARH;
+        boolean bvrLock = radarGuided && !RadarHud.bvrAcquiring
                 && RadarHud.bvrLockedUuid != null;
-        boolean arhSource = twsArh
+        boolean softSource = twsSoft
                 || (RadarHud.locked && RadarHud.lockedEntity != null)
                 || bvrLock;
-        if (chosen == MissileSpec.Guidance.ARH && !arhSource) {
+        if (chosen == MissileSpec.Guidance.ARH && !softSource) {
             notifyClient(mc, Component.literal(
                     "没有有效的雷达锁定或 TWS 跟踪"));
             return;
         }
         if (chosen == MissileSpec.Guidance.ARH) {
-            boolean ready = (twsArh || bvrLock)
+            boolean ready = (twsSoft || bvrLock)
                     ? RadarHud.seekerEnabledTicks >= 10
                     : RadarHud.seekerRing.aligned();
             if (!ready) {
@@ -401,11 +403,18 @@ public final class KeyInputHandler {
                 return;
             }
         }
-        if (chosen == MissileSpec.Guidance.SARH
-                && !RadarHud.seekerModel.canLaunchSarh()) {
-            notifyClient(mc, Component.literal(
-                    "SARH 需硬锁定并等待红色倒计时环"));
-            return;
+        if (chosen == MissileSpec.Guidance.SARH) {
+            if (bvrLock) {
+                if (RadarHud.seekerEnabledTicks < 10) {
+                    notifyClient(mc, Component.literal(
+                            "导引头未对准目标"));
+                    return;
+                }
+            } else if (!RadarHud.seekerModel.canLaunchSarh()) {
+                notifyClient(mc, Component.literal(
+                        "SARH 需硬锁定并等待红色倒计时环"));
+                return;
+            }
         }
         if (chosen == MissileSpec.Guidance.IR
                 && RadarHud.seekerLockedEntity == null) {
@@ -418,8 +427,7 @@ public final class KeyInputHandler {
         RadarHud.selectedSpec = specFor(chosen);
         int targetId = chosen == MissileSpec.Guidance.IR
                 ? RadarHud.seekerLockedEntity.getId() : -1;
-        java.util.UUID bvrUuid = chosen == MissileSpec.Guidance.ARH
-                ? RadarHud.bvrLockedUuid : null;
+        java.util.UUID bvrUuid = radarGuided ? RadarHud.bvrLockedUuid : null;
         Network.sendToServer(new MissileFirePacket(chosen.ordinal(), targetId, bvrUuid));
         RadarHudClientTicker.closeSeekerAfterLaunch();
         notifyClient(mc, Component.literal("导引头：关闭"));
@@ -431,7 +439,7 @@ public final class KeyInputHandler {
                 || text.equals("无可用导弹")
                 || text.equals("导引头：开启")
                 || text.equals("导引头：关闭")) {
-            mc.player.displayClientMessage(message, true);
+            return;
         }
     }
 
