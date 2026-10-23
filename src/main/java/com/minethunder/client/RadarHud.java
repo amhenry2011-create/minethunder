@@ -217,6 +217,10 @@ public final class RadarHud {
     public static String missileOutcome = "";
     public static long missileOutcomeAt = 0L;
     public static String lastLockMessage = "";
+    /** 最近一次锁定消息的写入时间（毫秒），用于消息行 3 秒新鲜度显示。 */
+    public static long lastLockMessageAt = 0L;
+    /** 当前 BVR 锁定目标涂抹快照的年龄（tick，-1 = 无涂抹），用于锁定框诊断读数。 */
+    public static int bvrLockedPaintAge = -1;
     /** 导引头操作反馈（无弹药/弹种不符/已开启等） */
     public static String seekerMessage = "";
 

@@ -113,7 +113,6 @@ public final class KeyInputHandler {
             case GLFW.GLFW_KEY_X -> {
                 if (RadarHud.lockedEntity != null) {
                     RadarHudClientTicker.toggleLock();
-                    notifyClient(mc, Component.literal(RadarHud.lastLockMessage));
                 } else {
                     RadarHudClientTicker.toggleSeeker();
                     notifyClient(mc, Component.literal(RadarHud.seekerMessage));

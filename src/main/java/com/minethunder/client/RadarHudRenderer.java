@@ -812,6 +812,11 @@ public final class RadarHudRenderer {
             g.drawString(mc.font, name, tx - mc.font.width(name) / 2, ty - off, GREEN, false);
             g.drawString(mc.font, info, tx - mc.font.width(info) / 2, ty + b + 4, GREEN, false);
             g.drawString(mc.font, closure, tx - mc.font.width(closure) / 2, ty + b + 14, GREEN, false);
+            if (RadarHud.bvrLockedPaintAge >= 0) {
+                String paintAge = String.format("涂龄 %d", RadarHud.bvrLockedPaintAge);
+                g.drawString(mc.font, paintAge,
+                        tx - mc.font.width(paintAge) / 2, ty + b + 24, GREEN, false);
+            }
             return;
         }
 
@@ -1180,10 +1185,19 @@ public final class RadarHudRenderer {
     }
 
     private static void renderSeekerMessage(GuiGraphics g, int w, int h) {
-        if (RadarHud.seekerMessage == null || RadarHud.seekerMessage.isEmpty()) return;
+        String text;
+        long now = System.currentTimeMillis();
+        if (RadarHud.lastLockMessage != null && !RadarHud.lastLockMessage.isEmpty()
+                && now - RadarHud.lastLockMessageAt <= 3000L) {
+            text = RadarHud.lastLockMessage;
+        } else if (RadarHud.seekerMessage != null && !RadarHud.seekerMessage.isEmpty()) {
+            text = RadarHud.seekerMessage;
+        } else {
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         float ui = Math.max(0.55f, HudScale.factor(w, h));
-        g.drawString(mc.font, RadarHud.seekerMessage,
+        g.drawString(mc.font, text,
                 Math.round(24 * ui),
                 h - Math.round(22 * ui), 0xFFFFFFFF, false);
     }

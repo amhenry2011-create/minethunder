@@ -301,7 +301,7 @@ public final class RadarHudClientTicker {
             if (best != null) {
                 RadarHud.preLockMode = RadarHud.currentMode;
                 completeLock(best.entity);
-                RadarHud.lastLockMessage = "ACM 自动截获 / TRK PD";
+                lockMessage("ACM 自动截获 / TRK PD");
             }
         }
 
@@ -978,6 +978,12 @@ public final class RadarHudClientTicker {
         beginLockAcquisition(entity, best.azimuthDeg, best.range, best.position);
     }
 
+    /** 写入锁定反馈并打时间戳，供消息行按新鲜度渲染。 */
+    private static void lockMessage(String text) {
+        RadarHud.lastLockMessage = text;
+        RadarHud.lastLockMessageAt = System.currentTimeMillis();
+    }
+
     /**
      * 无本地回波时回退：对 BVR 远程航迹发起雷达数据链软锁。
      * 仅空中目标、16..1000 格（与服务端校验一致）、SARH/ARH 雷达弹；
@@ -987,17 +993,17 @@ public final class RadarHudClientTicker {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return false;
         if (!RadarHud.radarOn) {
-            RadarHud.lastLockMessage = "雷达未开启";
+            lockMessage("雷达未开启");
             return false;
         }
         if (RadarHud.acmActive || RadarHud.currentMode == RadarMode.ACM) {
             // ACM 是纯近距自动截获，不提供远程锁定。
-            RadarHud.lastLockMessage = "无有效回波";
+            lockMessage("无有效回波");
             return false;
         }
         if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH
                 && RadarHud.selectedMissile != MissileSpec.Guidance.SARH) {
-            RadarHud.lastLockMessage = "远程锁定需雷达弹：请切换弹种";
+            lockMessage("远程锁定需雷达弹：请切换弹种");
             return false;
         }
         Vec3 eye = mc.player.getEyePosition();
@@ -1028,7 +1034,7 @@ public final class RadarHudClientTicker {
             }
         }
         if (best == null) {
-            RadarHud.lastLockMessage = "无具备扫描记忆的远程目标";
+            lockMessage("无具备扫描记忆的远程目标");
             return false;
         }
         RadarHud.bvrAcquiring = true;
@@ -1038,7 +1044,7 @@ public final class RadarHudClientTicker {
         // ACQ 阶段四角框锚定在被扫到的涂抹位置，与本地 ACQ 视觉一致。
         RadarHud.lockAnchorPosition = bestPaint.position();
         updateBvrInfo(mc.player, best);
-        RadarHud.lastLockMessage = "ACQ PD 远程尝试锁定";
+        lockMessage("ACQ PD 远程尝试锁定");
         return true;
     }
 
@@ -1070,7 +1076,7 @@ public final class RadarHudClientTicker {
         if (RadarHud.bvrAcquireTicks >= RadarHud.LOCK_ACQUIRE_TICKS) {
             RadarHud.bvrAcquiring = false;
             Network.sendToServer(new BvrLockPacket(RadarHud.bvrLockedUuid));
-            RadarHud.lastLockMessage = "TRK PD 远程锁定";
+            lockMessage("TRK PD 远程锁定");
         }
     }
 
@@ -1093,6 +1099,11 @@ public final class RadarHudClientTicker {
         Vec3 to = predicted.subtract(player.getEyePosition()).normalize();
         RadarHud.bvrLockedDistance = distance;
         RadarHud.bvrLockedClosure = -velocity.dot(to);
+        // 涂抹年龄：锁定/尝试锁定的目标如被波束持续刷新则读数恒小，
+        // 增大表示该航迹正在依赖 180 tick 涂抹记忆维持显示。
+        BvrState.Paint paint = BvrState.painted(track.uuid());
+        RadarHud.bvrLockedPaintAge = paint == null ? -1
+                : player.tickCount - paint.lastPaintTick();
     }
 
     private static void cancelBvrLock(@Nullable String message) {
@@ -1102,12 +1113,12 @@ public final class RadarHudClientTicker {
         RadarHud.bvrLockedName = "";
         RadarHud.bvrLockedDistance = 0;
         RadarHud.bvrLockedClosure = 0;
-        if (message != null) RadarHud.lastLockMessage = message;
+        if (message != null) lockMessage(message);
     }
 
     private static void beginLockAcquisition(Entity entity, double az, double range, Vec3 anchor) {
         if (!lockAllowed(entity)) {
-            RadarHud.lastLockMessage = "地面/海面目标需在 GMI/SEA 中锁定";
+            lockMessage("地面/海面目标需在 GMI/SEA 中锁定");
             return;
         }
         RadarHud.preLockMode = RadarHud.currentMode == RadarMode.STT
@@ -1128,7 +1139,7 @@ public final class RadarHudClientTicker {
         RadarHud.lockLostTicks = 0;
         RadarHud.seekerModel.reset();
         lastSeekerLockId = -1;
-        RadarHud.lastLockMessage = "ACQ PD 尝试锁定";
+        lockMessage("ACQ PD 尝试锁定");
     }
 
     private static void updateLockAcquisition(Player player, int tick) {
@@ -1195,7 +1206,7 @@ public final class RadarHudClientTicker {
         RadarHud.seekerModel.reset();
         lastSeekerLockId = -1;
         lockTicks = LOCK_HOLD_TICKS;
-        RadarHud.lastLockMessage = "TRK PD 锁定";
+        lockMessage("TRK PD 锁定");
     }
 
     private static void cancelLockAttempt(String message) {
@@ -1206,7 +1217,7 @@ public final class RadarHudClientTicker {
         RadarHud.lockProgress = 0f;
         RadarHud.lockAlpha = 0f;
         restorePreLockSearch();
-        RadarHud.lastLockMessage = message;
+        lockMessage(message);
     }
 
     /** 尝试锁定失败：恢复原搜索模式、距离档和扫描中心/宽度。 */
@@ -1243,7 +1254,7 @@ public final class RadarHudClientTicker {
     /** 模式切换时解除当前模式不再允许的目标，不恢复到旧模式。 */
     public static void clearLockForModeChange() {
         clearLockState();
-        RadarHud.lastLockMessage = "模式切换解除锁定";
+        lockMessage("模式切换解除锁定");
     }
 
     /** 只清理锁定相关状态，不恢复模式；供 ACM 进出使用。 */
@@ -1276,7 +1287,7 @@ public final class RadarHudClientTicker {
         if (returnToAcm) {
             RadarHud.acmCooldownTicks = 40;
         }
-        RadarHud.lastLockMessage = message;
+        lockMessage(message);
     }
 
     private static RadarContact findContact(Entity entity) {
@@ -1298,7 +1309,7 @@ public final class RadarHudClientTicker {
     /** Alt+T：只改变面板选中目标；不锁定、不触发屏幕动作。 */
     public static void selectNextTarget() {
         if (RadarHud.currentMode == RadarMode.STT) {
-            RadarHud.lastLockMessage = "TRK PD 为单目标跟踪，不能切换目标";
+            lockMessage("TRK PD 为单目标跟踪，不能切换目标");
             return;
         }
 
@@ -1307,7 +1318,7 @@ public final class RadarHudClientTicker {
             TwsTrack selected = TwsTrackManager.selected();
             RadarHud.selectedEchoId = selected == null ? -1 : selected.entityId;
             RadarHud.selectionInitialized = selected != null;
-            RadarHud.lastLockMessage = selected == null ? "无有效航迹" : "切换面板目标";
+            lockMessage(selected == null ? "无有效航迹" : "切换面板目标");
             return;
         }
 
@@ -1319,7 +1330,7 @@ public final class RadarHudClientTicker {
         valid.sort(java.util.Comparator.comparingDouble(e -> e.range));
         if (valid.isEmpty()) {
             RadarHud.selectedEchoId = -1;
-            RadarHud.lastLockMessage = "无有效回波";
+            lockMessage("无有效回波");
             return;
         }
         int index = -1;
@@ -1332,7 +1343,7 @@ public final class RadarHudClientTicker {
         RadarEcho next = valid.get((index + 1) % valid.size());
         RadarHud.selectedEchoId = next.entityId;
         RadarHud.selectionInitialized = true;
-        RadarHud.lastLockMessage = "切换面板目标";
+        lockMessage("切换面板目标");
     }
 
     /** 面板选择只由 Alt+T/扫描首次回波维护，不因视角移动自动换目标。 */
@@ -1709,7 +1720,7 @@ public final class RadarHudClientTicker {
         RadarHud.contactPaintTicks.clear();
         RadarHud.echoes.clear();
         TwsTrackManager.clear();
-        RadarHud.lastLockMessage = "";
+        lockMessage("");
         RadarHud.seekerMessage = "";
         RadarHud.selectedEchoId = -1;
         RadarHud.selectionInitialized = false;
