@@ -310,6 +310,12 @@ public final class RadarHudRenderer {
                     float bvrAlpha = bvrEchoAlpha(velocity, toBvr, dist);
                     g.fill(bx - shortLen / 2, by - thick / 2,
                             bx + shortLen / 2, by + thick / 2 + 1, alphaColor(GREEN, bvrAlpha));
+                    if (RadarHud.selectedEchoId == track.entityId()) {
+                        int vLen = Math.round(shortLen * 1.5f);
+                        int dx = shortLen / 2 + Math.max(3, (int) Math.round(size * 0.012));
+                        g.fill(bx - dx, by - vLen / 2, bx - dx + 2, by + vLen / 2, GREEN);
+                        g.fill(bx + dx, by - vLen / 2, bx + dx + 2, by + vLen / 2, GREEN);
+                    }
                 }
             }
         }
@@ -382,10 +388,17 @@ public final class RadarHudRenderer {
             int by = py + size - (int) (dist / range * size);
             if (bx < px + 2 || bx >= px + size - 2 || by < py + 12
                     || by >= py + size - 2) continue;
+            boolean selectedBvr = !lockedBvr && RadarHud.selectedEchoId == track.entityId();
             float bvrAlpha = lockedBvr ? 1f : bvrEchoAlpha(velocity, toBvr, dist);
-            int color = alphaColor(lockedBvr ? WHITE : GREEN, bvrAlpha);
+            int color = alphaColor((lockedBvr || selectedBvr) ? WHITE : GREEN, bvrAlpha);
             drawFilledCircle(g, bx, by, lockedBvr ? 3 : 2, color);
             drawHeadingLine(g, mc, velocity, bx, by, color);
+            if (selectedBvr) {
+                int vLen = 10;
+                int dx = 7;
+                g.fill(bx - dx, by - vLen / 2, bx - dx + 2, by + vLen / 2, GREEN);
+                g.fill(bx + dx, by - vLen / 2, bx + dx + 2, by + vLen / 2, GREEN);
+            }
         }
     }
 
@@ -828,11 +841,6 @@ public final class RadarHudRenderer {
             g.drawString(mc.font, name, tx - mc.font.width(name) / 2, ty - off, GREEN, false);
             g.drawString(mc.font, info, tx - mc.font.width(info) / 2, ty + b + 4, GREEN, false);
             g.drawString(mc.font, closure, tx - mc.font.width(closure) / 2, ty + b + 14, GREEN, false);
-            if (RadarHud.bvrLockedPaintAge >= 0) {
-                String paintAge = String.format("涂龄 %d", RadarHud.bvrLockedPaintAge);
-                g.drawString(mc.font, paintAge,
-                        tx - mc.font.width(paintAge) / 2, ty + b + 24, GREEN, false);
-            }
             return;
         }
 

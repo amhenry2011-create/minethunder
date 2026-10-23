@@ -1,22 +1,27 @@
 # MineThunder 交接 / 下次继续
 
 日期：2026-10-23
-状态：BVR 消息行修复（双排重复消除、白字左下）+ BVR 弹种放宽 SARH+ARH + BVR 涂抹/锁定与本地扫描全面同规。已构建待实测。
+状态：BVR 面板坐标「扫到才冻结」+ 锁定不问弹种 + Alt+T 循环含 BVR 航迹修正。已构建待实测。
 
-## 2026-10-23 四轮：锁定不问弹种 + BVR 面板坐标「扫到才冻结」（最新）
+## 2026-10-23 四轮：锁定不问弹种 + BVR 面板坐标「扫到才冻结」+ Alt+T 循环含 BVR 航迹（最新）
 
 ### 用户反馈与决议
 - "雷达锁定不需要弹种的区分" → `beginBvrLockAcquisition` 删除 SARH/ARH 弹种门控（发射时才按弹种校验），任何弹下 Alt+F 都可发起远程锁。
 - "现在我要的逻辑是波束扫描到目标再更新！一转视觉雷达还没扫到目标就跟着动" → 实因：本地面板点用命中时刻冻结的 az/dist（转视角不动），而 BVR 点渲染时实时用当前视轴重算方位。修复：`BvrState.Paint` 增加 `azDeg/range`（涂抹时刻面板坐标，方位相对当时视轴、右侧为正），`updateBvrPaints` 快照时冻结，`drawContacts`/`drawTwsContacts` 未锁定 BVR 点直接用冻结坐标；锁定（TRK）仍连续实时。
+- "涂龄又是啥，删掉" → `bvrLockedPaintAge` 字段 + 锁定框「涂龄 N」读数 + updateBvrInfo 更新点已整体删除。
+- "alt+t 没法切换目标" → 实因：Alt+T 只循环本地回波；360b 靶在客户端追踪距离外无本地回波 → 候选列表恒空 →「无有效回波」。修复：`selectNextTarget` 候选合并 BVR 涂抹航迹（跳过自己/被本地回波覆盖/未涂抹/模式不收的种类），按涂抹距离排序循环；`validatePanelSelection` 对 BVR 选中态做存活校验（丢弃自己/未涂抹/模式不收/TWS 内 BVR）；渲染给选中 BVR 点补本地同款标记（SRC/横线模式竖线、TWS 白圆点样式一致）。
 
 ### 本轮改动
-1. `BvrState.Paint(position, velocity, azDeg, range, lastPaintTick)`；tick 补冻结坐标写入。
-2. 渲染两处 BVR 循环：未锁定点绘制用 `paint.azDeg()/range()`；锁定点用实时（TRK 规则不变）。
-3. 文档 `BVR.md`（弹种不限 + 面板坐标冻结）、`HANDOFF.md`。
+1. `BvrState.Paint(position, velocity, azDeg, range, lastPaintTick)`；`updateBvrPaints` 快照写冻结坐标。
+2. 渲染两处 BVR 循环：未锁定点绘制用 `paint.azDeg()/range()`；锁定点实时（TRK 规则不变）。
+3. Alt+T 选中链路：`selectNextTarget` 合并候选 + `validatePanelSelection` BVR 校验 + 渲染两处选中标记。
+4. 删除「涂龄」诊断（字段/框绘制/更新点）。
+5. 文档 `BVR.md`（弹种不限 + 面板坐标冻结 + Alt+T 判定）、`HANDOFF.md`。
 
 ### 待办/下次优先
-- 实测转视角：未锁定 BVR 点应保持不动，波束扫到才跳位（与本地点一致）；Alt+F 反馈行应为唯一提示来源。
-- 涂龄读数：锁定框中若持续 ≲14t = 波束在持续刷新；若用户观察 30+ tick 仍"跟随视角"截图面板报告。
+- 实测转视角：未锁定 BVR 点应保持不动，波束扫到才跳位（与本地点一致）。
+- 实测 Alt+T：360b 幻翼靶应能循环点选（白圆点/高亮）；SRC 行回访约 14t 刷新一次。
+- 消息行为唯一反馈源（左下白字、3 秒新鲜度）：若 Alt+T 仍无切换，看行内是否出现「无有效回波」。
 
 ## 2026-10-23 三轮：消息行/SARH 入 BVR/涂抹同规/导弹强加载
 

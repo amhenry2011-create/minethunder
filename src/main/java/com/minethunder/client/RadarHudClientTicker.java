@@ -1095,11 +1095,6 @@ public final class RadarHudClientTicker {
         Vec3 to = predicted.subtract(player.getEyePosition()).normalize();
         RadarHud.bvrLockedDistance = distance;
         RadarHud.bvrLockedClosure = -velocity.dot(to);
-        // 涂抹年龄：锁定/尝试锁定的目标如被波束持续刷新则读数恒小，
-        // 增大表示该航迹正在依赖 180 tick 涂抹记忆维持显示。
-        BvrState.Paint paint = BvrState.painted(track.uuid());
-        RadarHud.bvrLockedPaintAge = paint == null ? -1
-                : player.tickCount - paint.lastPaintTick();
     }
 
     private static void cancelBvrLock(@Nullable String message) {
@@ -1318,12 +1313,31 @@ public final class RadarHudClientTicker {
             return;
         }
 
-        List<RadarEcho> valid = new ArrayList<>();
+        record Candidate(int entityId, double range) {}
+        List<Candidate> valid = new ArrayList<>();
         int tick = Minecraft.getInstance().player == null ? 0 : Minecraft.getInstance().player.tickCount;
+        java.util.UUID ownId = Minecraft.getInstance().player == null
+                ? null : Minecraft.getInstance().player.getUUID();
         for (RadarEcho echo : RadarHud.echoes.values()) {
-            if (!echo.expired(tick) && echoAllowed(echo)) valid.add(echo);
+            if (!echo.expired(tick) && echoAllowed(echo)) {
+                valid.add(new Candidate(echo.entityId, echo.range));
+            }
         }
-        valid.sort(java.util.Comparator.comparingDouble(e -> e.range));
+        for (BvrTrack track : BvrState.active()) {
+            if (ownId != null && ownId.equals(track.uuid())) continue;
+            // 本地回波已覆盖的航迹由本地候选表示，不重复入队。
+            RadarEcho shadow = RadarHud.echoes.get(track.uuid());
+            if (shadow != null && !shadow.expired(tick)) continue;
+            BvrState.Paint paint = BvrState.painted(track.uuid());
+            if (paint == null) continue;
+            RadarTargetClass cls = switch (track.kind()) {
+                case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+                case SURFACE -> RadarTargetClass.SEA;
+            };
+            if (!RadarHud.currentMode.accepts(cls)) continue;
+            valid.add(new Candidate(track.entityId(), paint.range()));
+        }
+        valid.sort(java.util.Comparator.comparingDouble(Candidate::range));
         if (valid.isEmpty()) {
             RadarHud.selectedEchoId = -1;
             lockMessage("无有效回波");
@@ -1331,13 +1345,12 @@ public final class RadarHudClientTicker {
         }
         int index = -1;
         for (int i = 0; i < valid.size(); i++) {
-            if (valid.get(i).entityId == RadarHud.selectedEchoId) {
+            if (valid.get(i).entityId() == RadarHud.selectedEchoId) {
                 index = i;
                 break;
             }
         }
-        RadarEcho next = valid.get((index + 1) % valid.size());
-        RadarHud.selectedEchoId = next.entityId;
+        RadarHud.selectedEchoId = valid.get((index + 1) % valid.size()).entityId();
         RadarHud.selectionInitialized = true;
         lockMessage("切换面板目标");
     }
@@ -1361,6 +1374,26 @@ public final class RadarHudClientTicker {
         for (RadarEcho echo : RadarHud.echoes.values()) {
             if (echo.entityId == RadarHud.selectedEchoId) {
                 if (echoAllowed(echo)) return;
+                break;
+            }
+        }
+        for (BvrTrack track : BvrState.active()) {
+            if (track.entityId() == RadarHud.selectedEchoId) {
+                BvrState.Paint paint = BvrState.painted(track.uuid());
+                if (paint != null) {
+                    RadarTargetClass cls = switch (track.kind()) {
+                        case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+                        case SURFACE -> RadarTargetClass.SEA;
+                    };
+                    if (RadarHud.currentMode.accepts(cls)
+                            && RadarHud.currentMode != RadarMode.TWS) {
+                        Minecraft minecraft = Minecraft.getInstance();
+                        if (minecraft.player == null
+                                || !track.uuid().equals(minecraft.player.getUUID())) {
+                            return;
+                        }
+                    }
+                }
                 break;
             }
         }
