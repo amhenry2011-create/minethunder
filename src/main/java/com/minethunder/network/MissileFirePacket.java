@@ -6,7 +6,6 @@ import com.minethunder.missile.MissileLaunchService;
 import com.minethunder.missile.MissileSpec;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.radar.RadarCore;
-import com.minethunder.radar.SeekerLockModel;
 import com.minethunder.radar.ServerRadarState;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -15,7 +14,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import javax.annotation.Nullable;
@@ -108,30 +106,6 @@ public record MissileFirePacket(int guidance, int targetId,
             if (player.distanceTo(target) > spec.maxDistance) {
                 reject(player, "目标超出导弹射程");
                 return;
-            }
-            Vec3 to = target.getBoundingBox().getCenter().subtract(player.getEyePosition());
-            Vec3 look = player.getViewVector(1.0F).normalize();
-            double offBoresight = to.lengthSqr() < 1.0E-6 ? 0.0
-                    : Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0,
-                    look.dot(to.normalize())))));
-            // 导引头 FOV 锥：导引头未对准目标（含 BVR 远程锁）不允许发射，
-            // 与客户端 SeekerLockModel 的退出余量一致，另加 1° 网络时序容差。
-            double launchCone = Math.max(spec.seekerFovDeg, 1.0)
-                    + SeekerLockModel.AIM_EXIT_MARGIN_DEG + 1.0;
-            if (offBoresight > launchCone) {
-                reject(player, "导引头未对准目标");
-                return;
-            }
-            if (!bvrLock) {
-                final Entity scannedTarget = target;
-                boolean scanned = RadarCore.scan(player.level(), player.getEyePosition(),
-                        look, mode, spec.maxDistance, Math.toRadians(120.0),
-                        Math.toRadians(60.0), player.getDeltaMovement(), player)
-                        .stream().anyMatch(c -> c.entity.getId() == scannedTarget.getId());
-                if (!scanned) {
-                    reject(player, "目标不在雷达扫描范围内");
-                    return;
-                }
             }
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),
                     target.getBoundingBox().getCenter(), targetClass)) {
