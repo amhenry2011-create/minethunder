@@ -24,10 +24,13 @@ public final class BvrState {
     private static final Map<UUID, Entry> TRACKS = new HashMap<>();
 
     /**
-     * 波束涂抹记忆：只有扫描波束实际扫过的航迹才会建立/刷新快照，
-     * 面板绘制使用快照中的冻结位置，与本地回波保持同一套规则。
+     * 波束涂抹记忆：只有扫描波束实际扫过的航迹才会建立/刷新快照。
+     * position/velocity 为涂抹时刻的世界坐标快照；azDeg/range 为涂抹时刻的
+     * 面板坐标（方位相对当时的机头视轴、右侧为正），未再扫到期间面板
+     * 保持冻结坐标——与本地回波同一套「扫到才更新」规则。
      */
-    public record Paint(Vec3 position, Vec3 velocity, int lastPaintTick) {}
+    public record Paint(Vec3 position, Vec3 velocity, float azDeg, double range,
+                        int lastPaintTick) {}
 
     private static final Map<UUID, Paint> PAINTS = new HashMap<>();
 

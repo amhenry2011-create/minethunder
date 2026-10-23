@@ -260,18 +260,26 @@ public final class RadarHudRenderer {
             BvrState.Paint paint = BvrState.painted(track.uuid());
             Vec3 predicted;
             Vec3 velocity;
+            float panelAzBvr;
+            double distBvr;
             if (isLockedBvr) {
                 predicted = BvrState.lagCompensatedPosition(track);
                 velocity = track.velocity();
+                Vec3 toLock = predicted.subtract(bvrEye);
+                panelAzBvr = (float) Math.toDegrees(Math.atan2(
+                        toLock.dot(bvrRight), toLock.dot(bvrLook)));
+                distBvr = bvrEye.distanceTo(predicted);
             } else {
                 if (paint == null) continue;
                 predicted = paint.position();
                 velocity = paint.velocity();
+                panelAzBvr = paint.azDeg();
+                distBvr = paint.range();
             }
-            double dist = bvrEye.distanceTo(predicted);
+            double dist = distBvr;
             if (dist > range || dist < 0.1) continue;
             Vec3 toBvr = predicted.subtract(bvrEye);
-            double az = Math.toDegrees(Math.atan2(toBvr.dot(bvrRight), toBvr.dot(bvrLook)));
+            double az = panelAzBvr;
             int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2));
             int by = py + size - (int) (dist / range * size);
             if (bx < px + 2 || bx >= px + size - 2 || by < py + 12 || by >= py + size - 2) continue;
@@ -350,18 +358,26 @@ public final class RadarHudRenderer {
             BvrState.Paint paint = BvrState.painted(track.uuid());
             Vec3 predicted;
             Vec3 velocity;
+            float panelAzTws;
+            double distTws;
             if (lockedBvr) {
                 predicted = BvrState.lagCompensatedPosition(track);
                 velocity = track.velocity();
+                Vec3 toLock = predicted.subtract(bvrEye);
+                panelAzTws = (float) Math.toDegrees(Math.atan2(
+                        toLock.dot(bvrRight), toLock.dot(bvrLook)));
+                distTws = bvrEye.distanceTo(predicted);
             } else {
                 if (paint == null) continue;
                 predicted = paint.position();
                 velocity = paint.velocity();
+                panelAzTws = paint.azDeg();
+                distTws = paint.range();
             }
-            double dist = bvrEye.distanceTo(predicted);
+            double dist = distTws;
             if (dist > range || dist < 0.1) continue;
             Vec3 toBvr = predicted.subtract(bvrEye);
-            double az = Math.toDegrees(Math.atan2(toBvr.dot(bvrRight), toBvr.dot(bvrLook)));
+            double az = panelAzTws;
             int bx = px + size / 2 + (int) (az / RadarHud.PANEL_AZIMUTH_DEG * (size / 2));
             int by = py + size - (int) (dist / range * size);
             if (bx < px + 2 || bx >= px + size - 2 || by < py + 12

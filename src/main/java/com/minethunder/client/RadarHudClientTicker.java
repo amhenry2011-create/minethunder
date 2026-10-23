@@ -986,7 +986,8 @@ public final class RadarHudClientTicker {
 
     /**
      * 无本地回波时回退：对 BVR 远程航迹发起雷达数据链软锁。
-     * 仅空中目标、16..1000 格（与服务端校验一致）、SARH/ARH 雷达弹；
+     * 雷达锁定属雷达功能，不区分弹种（发射时才按弹种校验）；
+     * 仅空中目标、16..1000 格（与服务端校验一致）；
      * 候选必须已被扫描波束涂抹过（BvrState.painted），与普通雷达锁定同规。
      */
     private static boolean beginBvrLockAcquisition() {
@@ -999,11 +1000,6 @@ public final class RadarHudClientTicker {
         if (RadarHud.acmActive || RadarHud.currentMode == RadarMode.ACM) {
             // ACM 是纯近距自动截获，不提供远程锁定。
             lockMessage("无有效回波");
-            return false;
-        }
-        if (RadarHud.selectedMissile != MissileSpec.Guidance.ARH
-                && RadarHud.selectedMissile != MissileSpec.Guidance.SARH) {
-            lockMessage("远程锁定需雷达弹：请切换弹种");
             return false;
         }
         Vec3 eye = mc.player.getEyePosition();
@@ -1511,7 +1507,16 @@ public final class RadarHudClientTicker {
                     || Math.abs(RadarCore.elevationBetween(beamDir, to)) > elHalf) {
                 continue;
             }
-            BvrState.paint(track.uuid(), new BvrState.Paint(pos, track.velocity(), nowTick));
+            // 面板坐标在涂抹时刻冻结（与本地回波同规）：方位相对当时视轴、右侧为正。
+            Vec3 view = player.getViewVector(1.0F).normalize();
+            Vec3 right = view.cross(new Vec3(0, 1, 0));
+            if (right.lengthSqr() < 1.0E-6) right = new Vec3(1, 0, 0);
+            right = right.normalize();
+            float frozenAz = (float) (Math.toDegrees(
+                    Math.atan2(to.dot(right), to.dot(view)))
+                    + RadarHud.scanAzimuthOffsetDeg);
+            BvrState.paint(track.uuid(), new BvrState.Paint(
+                    pos, track.velocity(), frozenAz, distance, nowTick));
         }
     }
 
