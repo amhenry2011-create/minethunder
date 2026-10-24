@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": { "item": "minecraft:iron_block" },
+    "L": { "item": "minethunder:liquid_engine" },
+    "B": { "item": "minecraft:blaze_rod" },
+    "N": { "item": "minecraft:netherite_scrap" }
+  },
+  "pattern": [
+    "IBI",
+    "BLB",
+    "INI"
+  ],
+  "result": {
+    "id": "minethunder:jet_engine",
+    "count": 1
+  }
+}

@@ -85,8 +85,15 @@ public final class RadarCore {
         List<RadarContact> contacts = new ArrayList<>();
         List<Entity> entities = level.getEntities(exclude, area, Entity::isAlive);
 
+        Entity excludeRoot = exclude == null ? null : exclude.getRootVehicle();
+
         for (Entity e : entities) {
+            if (excludeRoot != null && (e == excludeRoot || e.getRootVehicle() == excludeRoot)) continue;
             if (e instanceof MissileArrow arrow && arrow.getOwner() == exclude) continue;
+            // 乘坐在飞机内的生物由飞机实体本身作为统一雷达反射体，避免同一位置出现双重回波
+            if (e instanceof LivingEntity living && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity) {
+                continue;
+            }
             Vec3 pos = e.getBoundingBox().getCenter();
             Vec3 to = pos.subtract(origin);
             double dist = to.length();
@@ -164,8 +171,11 @@ public final class RadarCore {
         return false;
     }
 
-    /** 目标分类：船、地面活体、空中活体；其他实体不进入雷达目标列表。 */
+    /** 目标分类：固定翼飞机、船、地面活体、空中活体；其他实体不进入雷达目标列表。 */
     public static RadarTargetClass classify(Entity entity) {
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
+        }
         if (entity instanceof Marker marker) {
             return RadarBlockTargets.targetClass(marker);
         }
@@ -181,6 +191,9 @@ public final class RadarCore {
         }
         if (!(entity instanceof LivingEntity living) || !living.isAlive()) return null;
         if (living.isPassenger() && living.getVehicle() instanceof Boat) return null;
+        if (living.isPassenger() && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
+        }
         // 水面/水下活体仍作为空中模式可见目标，避免落水后完全隐身。
         if (living.isInWater()) return RadarTargetClass.AIR;
 

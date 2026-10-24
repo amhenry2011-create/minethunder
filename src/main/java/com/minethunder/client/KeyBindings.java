@@ -25,6 +25,7 @@ public final class KeyBindings {
     private KeyBindings() {}
 
     public static final String CATEGORY = "key.categories.minethunder";
+    public static final String PLANE_CATEGORY = "key.categories.minethunder.plane";
 
     /** 切换导弹类型（SARH / ARH / IR） */
     public static final KeyMapping CYCLE_MISSILE_TYPE = new KeyMapping(
@@ -39,10 +40,54 @@ public final class KeyBindings {
             "key.minethunder.recenter", InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_RIGHT_SHIFT, CATEGORY);
 
+    // 简单飞机（Simple Planes）冷舱启动与飞行控制系统按键
+    public static final KeyMapping PLANE_BATTERY = new KeyMapping(
+            "key.minethunder.plane_battery", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_FUEL_PUMP = new KeyMapping(
+            "key.minethunder.plane_fuel_pump", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_MAGNETO = new KeyMapping(
+            "key.minethunder.plane_magneto", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_STARTER = new KeyMapping(
+            "key.minethunder.plane_starter", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_THROTTLE_UP = new KeyMapping(
+            "key.minethunder.plane_throttle_up", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_R, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_THROTTLE_DOWN = new KeyMapping(
+            "key.minethunder.plane_throttle_down", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_YAW_LEFT = new KeyMapping(
+            "key.minethunder.plane_yaw_left", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Z, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_YAW_RIGHT = new KeyMapping(
+            "key.minethunder.plane_yaw_right", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_N, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_FLAPS_UP = new KeyMapping(
+            "key.minethunder.plane_flaps_up", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_U, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_FLAPS_DOWN = new KeyMapping(
+            "key.minethunder.plane_flaps_down", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_V, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_GEAR = new KeyMapping(
+            "key.minethunder.plane_gear", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_PARK_BRAKE = new KeyMapping(
+            "key.minethunder.plane_park_brake", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_TRIM_DOWN = new KeyMapping(
+            "key.minethunder.plane_trim_down", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_LEFT_BRACKET, PLANE_CATEGORY);
+    public static final KeyMapping PLANE_TRIM_UP = new KeyMapping(
+            "key.minethunder.plane_trim_up", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_BRACKET, PLANE_CATEGORY);
+
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(CYCLE_MISSILE_TYPE);
         event.register(RACK_SELECT);
         event.register(RECENTER);
+        event.register(PLANE_BATTERY);
+        event.register(PLANE_FUEL_PUMP);
+        event.register(PLANE_MAGNETO);
+        event.register(PLANE_STARTER);
+        event.register(PLANE_THROTTLE_UP);
+        event.register(PLANE_THROTTLE_DOWN);
+        event.register(PLANE_YAW_LEFT);
+        event.register(PLANE_YAW_RIGHT);
+        event.register(PLANE_FLAPS_UP);
+        event.register(PLANE_FLAPS_DOWN);
+        event.register(PLANE_GEAR);
+        event.register(PLANE_PARK_BRAKE);
+        event.register(PLANE_TRIM_DOWN);
+        event.register(PLANE_TRIM_UP);
     }
 }

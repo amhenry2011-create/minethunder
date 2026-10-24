@@ -92,7 +92,8 @@ public final class ServerRadarState {
     private static boolean validateBvrTarget(ServerPlayer player, @Nullable UUID bvrTargetUuid,
                                              ResourceKey<Level> dimension) {
         if (bvrTargetUuid == null) return false;
-        if (player.getUUID().equals(bvrTargetUuid)) return false;
+        if (player.getUUID().equals(bvrTargetUuid)
+                || player.getRootVehicle().getUUID().equals(bvrTargetUuid)) return false;
         Entity entity = player.serverLevel().getEntity(bvrTargetUuid);
         if (entity == null || !entity.isAlive()) return false;
         if (!dimension.equals(player.serverLevel().dimension())) return false;

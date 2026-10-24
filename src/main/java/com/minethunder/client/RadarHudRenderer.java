@@ -1013,7 +1013,7 @@ public final class RadarHudRenderer {
         float ui = HudScale.factor(w, h);
         int x = Math.max(4, Math.round(18 * ui));
         int y = Math.max(4, Math.round(10 * ui));
-        double speed = mc.player.getDeltaMovement().horizontalDistance() * 20.0;
+        double speed = mc.player.getRootVehicle().getDeltaMovement().horizontalDistance() * 20.0;
 
         int ir = 0, sarh = 0, arh = 0;
         int flares = 0, chaff = 0;

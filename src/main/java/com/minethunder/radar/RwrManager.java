@@ -99,12 +99,18 @@ public final class RwrManager {
             return;
         }
         Entity entity = source.serverLevel().getEntity(targetId);
-        if (!(entity instanceof ServerPlayer target) || target == source
-                || target.level() != source.level()) {
+        ServerPlayer target = null;
+        if (entity instanceof ServerPlayer sp) {
+            target = sp;
+        } else if (entity instanceof com.minethunder.plane.PlaneEntity plane
+                && plane.getControllingPassenger() instanceof ServerPlayer sp) {
+            target = sp;
+        }
+        if (target == null || target == source || target.level() != source.level()) {
             return;
         }
         Vec3 eye = source.getEyePosition();
-        Vec3 targetPos = target.getBoundingBox().getCenter();
+        Vec3 targetPos = entity.getBoundingBox().getCenter();
         if (eye.distanceTo(targetPos) > RANGE || isVerticalBlind(eye, targetPos)) return;
         Vec3 look = source.getViewVector(1.0F).normalize();
         double az = Math.toDegrees(RadarCore.azimuthBetween(look, targetPos.subtract(eye)));
@@ -113,10 +119,11 @@ public final class RwrManager {
         long tick = source.getServer().getTickCount();
         long lastPaint = LAST_PAINT.getOrDefault(source.getUUID(), -100L);
         if (tick - lastPaint < 10) return;
+        int checkId = entity.getId();
         boolean seen = RadarCore.scan(source.level(), eye, look, RadarMode.SRC_PD,
                 RANGE, Math.toRadians(120.0), Math.toRadians(60.0),
-                source.getDeltaMovement(), source).stream()
-                .anyMatch(c -> c.entity.getId() == target.getId());
+                source.getRootVehicle().getDeltaMovement(), source).stream()
+                .anyMatch(c -> c.entity.getId() == checkId);
         if (!seen) return;
         LAST_PAINT.put(source.getUUID(), tick);
         String tag = firstLetter(source);
@@ -152,6 +159,7 @@ public final class RwrManager {
         Set<Integer> trackedSources = new HashSet<>();
         Vec3 eye = viewer.getEyePosition();
         Vec3 look = viewer.getViewVector(1.0F).normalize();
+        Entity viewerVehicle = viewer.getVehicle();
 
         for (ServerPlayer source : viewer.server.getPlayerList().getPlayers()) {
             if (source == viewer || source.level() != viewer.level()) continue;
@@ -162,15 +170,19 @@ public final class RwrManager {
             if (distance < 0.5 || distance > RANGE || isVerticalBlind(eye, sourcePos)) continue;
 
             RwrThreat threat = null;
-            if (state.targetId() == viewer.getId()) {
+            boolean idMatch = state.targetId() == viewer.getId()
+                    || (viewerVehicle != null && state.targetId() == viewerVehicle.getId());
+            boolean bvrMatch = viewer.getUUID().equals(state.bvrTargetUuid())
+                    || (viewerVehicle != null && viewerVehicle.getUUID().equals(state.bvrTargetUuid()));
+            if (idMatch) {
                 if (state.hardLock()) threat = RwrThreat.LOCK;
                 else if (state.radarMode() == RadarMode.TWS.ordinal()
                         || state.radarMode() == RadarMode.STT.ordinal()) {
                     threat = RwrThreat.TRACK;
                 }
-            } else if (viewer.getUUID().equals(state.bvrTargetUuid())) {
+            } else if (bvrMatch) {
                 // BVR 远程锁定在对方 RWR 上同样表现为跟踪威胁。
-                threat = RwrThreat.TRACK;
+                threat = state.hardLock() ? RwrThreat.LOCK : RwrThreat.TRACK;
             }
             if (threat != null) {
                 contacts.add(contact(source.getId(), threat, eye, look,

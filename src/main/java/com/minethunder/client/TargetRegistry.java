@@ -47,7 +47,8 @@ public final class TargetRegistry {
         }
 
         for (BvrTrack track : BvrState.active()) {
-            if (player.getUUID().equals(track.uuid())) continue;
+            if (player.getUUID().equals(track.uuid())
+                    || player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             if (track.kind() == BvrKind.MISSILE
                     && player.getUUID().equals(track.ownerUuid())) continue;
             RadarTargetClass targetClass = classOf(track);
