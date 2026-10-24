@@ -119,6 +119,11 @@ public final class KeyInputHandler {
                 }
             }
             case GLFW.GLFW_KEY_I -> {
+                if (mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
+                        && !plane.isEngineRunning()) {
+                    // 飞机未启动时按住 I 为点火马达，不弹红外模式切换提示
+                    break;
+                }
                 RadarHud.selectedMissile = MissileSpec.Guidance.IR;
                 RadarHud.selectedSpec = MissileSpecs.IR;
                 notifyClient(mc, Component.literal("红外弹模式 / 红外导引头"));
@@ -204,6 +209,13 @@ public final class KeyInputHandler {
     private static void toggleRadar(Minecraft mc) {
         if (RadarHud.lockAcquiring) {
             notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，雷达开关已冻结"));
+            return;
+        }
+        if (mc.player != null
+                && mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
+                && !plane.isMasterBatteryOn()) {
+            RadarHud.radarOn = false;
+            notifyClient(mc, Component.literal("请先按 B 开启飞机主电瓶才能给机载雷达供电"));
             return;
         }
         RadarHud.radarOn = !RadarHud.radarOn;

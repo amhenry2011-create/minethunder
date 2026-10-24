@@ -45,6 +45,12 @@ public final class SensorDebugCommand {
                         .then(Commands.literal("clear")
                                 .executes(context -> clearTestTargets(context.getSource()))))
                 .then(Commands.literal("test")
+                        .then(Commands.literal("plane")
+                                .executes(context -> spawnTestPlane(context.getSource(), false))
+                                .then(Commands.literal("afterburner")
+                                        .executes(context -> spawnTestPlane(context.getSource(), true)))
+                                .then(Commands.literal("clear")
+                                        .executes(context -> clearTestPlanes(context.getSource()))))
                         .then(Commands.literal("intercept")
                                 .executes(context -> spawnInterceptTest(context.getSource())))
                         .then(Commands.literal("incoming")
@@ -205,6 +211,54 @@ public final class SensorDebugCommand {
         int count = removed;
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
                 "已清除 " + count + " 枚测试导弹"), false);
+        return 1;
+    }
+
+    /** 在玩家前方生成一架开机巡航的测试固定翼靶机，供雷达/TWS/ACM/BVR/红外测试。 */
+    private static int spawnTestPlane(CommandSourceStack source, boolean afterburner) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("只有玩家可以生成测试靶机"));
+            return 0;
+        }
+        ServerLevel level = player.serverLevel();
+        Vec3 look = player.getLookAngle().normalize();
+        Vec3 pos = player.getEyePosition().add(look.scale(80.0)).add(0, 12.0, 0);
+        com.minethunder.plane.PlaneEntity plane = new com.minethunder.plane.PlaneEntity(
+                com.minethunder.Registration.LARGE_PLANE.get(), level,
+                com.minethunder.plane.PlaneTypeSpec.LARGE_PLANE);
+        plane.moveTo(pos.x, pos.y, pos.z, player.getYRot() + 90.0f, 0.0f);
+        plane.configureRunningForTest(
+                com.minethunder.plane.PlaneEngineType.JET,
+                afterburner ? 1.10f : 0.78f,
+                afterburner);
+        Vec3 heading = Vec3.directionFromRotation(0.0f, player.getYRot() + 90.0f).normalize();
+        plane.setDeltaMovement(heading.scale(afterburner ? 1.45 : 0.95));
+        plane.setCustomName(net.minecraft.network.chat.Component.literal(
+                afterburner ? "BOGEY-JET-AB" : "BOGEY-JET"));
+        plane.setCustomNameVisible(true);
+        plane.addTag(com.minethunder.radar.BvrTicketService.BVR_TAG);
+        plane.addTag("minethunder_test_plane");
+        level.addFreshEntity(plane);
+        com.minethunder.radar.BvrTicketService.registerManualTarget(plane);
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已在前方 80 格生成喷气靶机 " + (afterburner ? "BOGEY-JET-AB (开启加力 WEP)" : "BOGEY-JET (巡航推力)")), false);
+        return 1;
+    }
+
+    private static int clearTestPlanes(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) return 0;
+        int removed = 0;
+        for (Entity entity : player.serverLevel().getAllEntities()) {
+            if (entity instanceof com.minethunder.plane.PlaneEntity
+                    && (entity.getTags().contains("minethunder_test_plane")
+                    || entity.getPassengers().isEmpty())) {
+                entity.discard();
+                removed++;
+            }
+        }
+        final int count = removed;
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已清除 " + count + " 架无人飞机/测试靶机"), false);
         return 1;
     }
 

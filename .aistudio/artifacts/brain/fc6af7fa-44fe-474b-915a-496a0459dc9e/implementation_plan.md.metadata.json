@@ -1,0 +1,6 @@
+{
+  "summary":  "將 Simple Planes 固定翼飛機與發動機移植至 MineThunder（NeoForge 1.21.1），加入微軟模擬飛行（MSFS）級別硬核冷艙啟動流程、真實空氣動力學（迎角/升阻力/失速/襟翼/起落架/配平/G值過載）、主畫面專屬飛行 HUD，並與現有雷達（SRC PD/TWS/ACM/GMI/STT）、BVR 超視距數據鏈、RWR 及紅外線熱源/導彈初速系統深度整合，同時完整撰寫 README 快捷鍵與操作手冊。",
+  "updatedAt":  "2026-10-24T06:49:04.334076330Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

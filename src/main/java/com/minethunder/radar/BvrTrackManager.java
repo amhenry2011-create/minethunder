@@ -60,6 +60,10 @@ public final class BvrTrackManager {
         Set<UUID> collected = new HashSet<>();
         for (ServerLevel level : server.getAllLevels()) {
             for (ServerPlayer player : level.players()) {
+                if (player.getVehicle() instanceof com.minethunder.plane.PlaneEntity) {
+                    // 骑乘飞机的玩家由飞机实体本身发布 BVR 航迹，避免重影
+                    continue;
+                }
                 collected.add(player.getUUID());
                 tracks.add(new BvrTrack(player.getUUID(), BvrKind.PLAYER,
                         player.getUUID(), player.getGameProfile().getName(),
@@ -69,7 +73,15 @@ public final class BvrTrackManager {
             for (Entity entity : level.getAllEntities()) {
                 UUID uuid = entity.getUUID();
                 if (entity instanceof net.minecraft.world.entity.player.Player) continue;
-                if (entity.getTags().contains(BvrTicketService.BVR_TAG)) {
+                if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+                    collected.add(uuid);
+                    Entity pilot = plane.getControllingPassenger();
+                    tracks.add(new BvrTrack(uuid, classify(plane),
+                            pilot == null ? null : pilot.getUUID(),
+                            nameOf(plane),
+                            plane.getBoundingBox().getCenter(), plane.getDeltaMovement(),
+                            plane.getId()));
+                } else if (entity.getTags().contains(BvrTicketService.BVR_TAG)) {
                     collected.add(uuid);
                     tracks.add(new BvrTrack(uuid, classify(entity),
                             null, nameOf(entity),
@@ -113,6 +125,9 @@ public final class BvrTrackManager {
     }
 
     private static BvrKind classify(Entity entity) {
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.isAirborneTarget() ? BvrKind.AI : BvrKind.SURFACE;
+        }
         // 飞行生物直接按空中目标处理，避免低空悬停时支撑扫描误判为地面。
         if (entity instanceof FlyingMob
                 || entity instanceof Vex
@@ -125,6 +140,12 @@ public final class BvrTrackManager {
 
     private static String nameOf(Entity entity) {
         if (entity.getCustomName() != null) return entity.getCustomName().getString();
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            if (plane.getControllingPassenger() instanceof net.minecraft.world.entity.player.Player p) {
+                return p.getGameProfile().getName();
+            }
+            return plane.getPlaneType().id().toUpperCase(java.util.Locale.ROOT);
+        }
         return entity.getName().getString();
     }
 
@@ -132,7 +153,9 @@ public final class BvrTrackManager {
         List<BvrTrack> visible = new ArrayList<>();
         Vec3 eye = viewer.getEyePosition();
         ServerLevel level = viewer.serverLevel();
+        Entity ownVehicle = viewer.getRootVehicle();
         for (BvrTrack track : tracks) {
+            if (ownVehicle != null && ownVehicle.getUUID().equals(track.uuid())) continue;
             double distance = track.position().distanceTo(eye);
             if (distance < 1.0 || distance > RANGE) continue;
             if (track.kind() == BvrKind.MISSILE) {

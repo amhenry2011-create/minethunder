@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "F": { "item": "minecraft:blast_furnace" },
+    "P": { "item": "minecraft:piston" }
+  },
+  "pattern": [
+    "IFI",
+    "IPI",
+    "III"
+  ],
+  "result": {
+    "id": "minethunder:furnace_engine",
+    "count": 1
+  }
+}

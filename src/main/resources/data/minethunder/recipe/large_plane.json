@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "transportation",
+  "key": {
+    "P": { "tag": "minecraft:planks" },
+    "I": { "item": "minecraft:iron_block" },
+    "S": { "item": "minethunder:small_plane" },
+    "E": { "item": "minethunder:liquid_engine" }
+  },
+  "pattern": [
+    "PPP",
+    "ISI",
+    " E "
+  ],
+  "result": {
+    "id": "minethunder:large_plane",
+    "count": 1
+  }
+}

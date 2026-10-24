@@ -101,6 +101,8 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
     private static void spawn(ServerPlayer player, Countermeasure kind) {
         CountermeasureEntity entity = new CountermeasureEntity(
                 Registration.COUNTERMEASURE.get(), player.serverLevel());
+        net.minecraft.world.entity.Entity carrier = player.getRootVehicle();
+        net.minecraft.world.phys.Vec3 carrierVel = carrier.getDeltaMovement();
         entity.setPos(player.getX() + player.getRandom().nextDouble() * 0.8 - 0.4,
                 player.getY() + 0.2,
                 player.getZ() + player.getRandom().nextDouble() * 0.8 - 0.4);
@@ -108,9 +110,9 @@ public record CountermeasurePacket(int kind) implements CustomPacketPayload {
         entity.setItem(new ItemStack(kind == Countermeasure.FLARE
                 ? Items.FIRE_CHARGE : Items.SNOWBALL));
         entity.setDeltaMovement(
-                player.getRandom().nextDouble() * 0.28 - 0.14,
-                0.35 + player.getRandom().nextDouble() * 0.2,
-                player.getRandom().nextDouble() * 0.28 - 0.14);
+                carrierVel.x * 0.78 + player.getRandom().nextDouble() * 0.28 - 0.14,
+                carrierVel.y * 0.78 + 0.25 + player.getRandom().nextDouble() * 0.2,
+                carrierVel.z * 0.78 + player.getRandom().nextDouble() * 0.28 - 0.14);
         player.serverLevel().addFreshEntity(entity);
     }
 }

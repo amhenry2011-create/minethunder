@@ -26,5 +26,8 @@ public final class ClientRenderers {
         event.registerEntityRenderer(Registration.COUNTERMEASURE.get(),
                 context -> new ThrownItemRenderer<CountermeasureEntity>(context));
         event.registerEntityRenderer(Registration.SUN_HEAT_MARKER.get(), NoopRenderer::new);
+        event.registerEntityRenderer(Registration.SMALL_PLANE.get(), PlaneRenderer::new);
+        event.registerEntityRenderer(Registration.LARGE_PLANE.get(), PlaneRenderer::new);
+        event.registerEntityRenderer(Registration.CARGO_PLANE.get(), PlaneRenderer::new);
     }
 }

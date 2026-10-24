@@ -13,7 +13,7 @@ public enum RadarIconType {
     BLOCK;
 
     public static RadarIconType from(Entity entity) {
-        if (entity instanceof Player) return PLAYER;
+        if (entity instanceof Player || entity instanceof com.minethunder.plane.PlaneEntity) return PLAYER;
         if (entity instanceof MissileArrow) return MISSILE;
         if (entity instanceof Marker) return BLOCK;
         return LIVING;

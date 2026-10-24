@@ -7,6 +7,11 @@ import com.minethunder.missile.MissileFireworkItem;
 import com.minethunder.missile.MissileSpecs;
 import com.minethunder.missile.SarhMissileArrow;
 import com.minethunder.missile.SunHeatMarker;
+import com.minethunder.plane.PlaneEngineItem;
+import com.minethunder.plane.PlaneEngineType;
+import com.minethunder.plane.PlaneEntity;
+import com.minethunder.plane.PlaneItem;
+import com.minethunder.plane.PlaneTypeSpec;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -75,6 +80,31 @@ public final class Registration {
                     .updateInterval(10)
                     .build("minethunder:sun_heat_marker"));
 
+    // 简单飞机（Simple Planes）移植固定翼飞机实体
+    public static final DeferredHolder<EntityType<?>, EntityType<PlaneEntity>> SMALL_PLANE =
+            ENTITIES.register("small_plane", () -> EntityType.Builder
+                    .<PlaneEntity>of((type, level) -> new PlaneEntity(type, level, PlaneTypeSpec.SMALL_PLANE), MobCategory.MISC)
+                    .sized(PlaneTypeSpec.SMALL_PLANE.width(), PlaneTypeSpec.SMALL_PLANE.height())
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
+                    .build("minethunder:small_plane"));
+
+    public static final DeferredHolder<EntityType<?>, EntityType<PlaneEntity>> LARGE_PLANE =
+            ENTITIES.register("large_plane", () -> EntityType.Builder
+                    .<PlaneEntity>of((type, level) -> new PlaneEntity(type, level, PlaneTypeSpec.LARGE_PLANE), MobCategory.MISC)
+                    .sized(PlaneTypeSpec.LARGE_PLANE.width(), PlaneTypeSpec.LARGE_PLANE.height())
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
+                    .build("minethunder:large_plane"));
+
+    public static final DeferredHolder<EntityType<?>, EntityType<PlaneEntity>> CARGO_PLANE =
+            ENTITIES.register("cargo_plane", () -> EntityType.Builder
+                    .<PlaneEntity>of((type, level) -> new PlaneEntity(type, level, PlaneTypeSpec.CARGO_PLANE), MobCategory.MISC)
+                    .sized(PlaneTypeSpec.CARGO_PLANE.width(), PlaneTypeSpec.CARGO_PLANE.height())
+                    .clientTrackingRange(80)
+                    .updateInterval(1)
+                    .build("minethunder:cargo_plane"));
+
     // 导弹物品：用弓发射时生成对应导弹箭实体（箭 = 导弹）
     public static final DeferredHolder<Item, Item> SARH_MISSILE_ITEM =
             ITEMS.register("sarh_missile", () -> new com.minethunder.missile.MissileItem(
@@ -101,12 +131,43 @@ public final class Registration {
             ITEMS.register("ir_missile_firework", () -> new MissileFireworkItem(
                     new Item.Properties().stacksTo(16), MissileSpecs.IR));
 
+    // 简单飞机（Simple Planes）固定翼飞机与航空发动机物品
+    public static final DeferredHolder<Item, Item> SMALL_PLANE_ITEM =
+            ITEMS.register("small_plane", () -> new PlaneItem(
+                    new Item.Properties().stacksTo(1), PlaneTypeSpec.SMALL_PLANE));
+
+    public static final DeferredHolder<Item, Item> LARGE_PLANE_ITEM =
+            ITEMS.register("large_plane", () -> new PlaneItem(
+                    new Item.Properties().stacksTo(1), PlaneTypeSpec.LARGE_PLANE));
+
+    public static final DeferredHolder<Item, Item> CARGO_PLANE_ITEM =
+            ITEMS.register("cargo_plane", () -> new PlaneItem(
+                    new Item.Properties().stacksTo(1), PlaneTypeSpec.CARGO_PLANE));
+
+    public static final DeferredHolder<Item, Item> FURNACE_ENGINE =
+            ITEMS.register("furnace_engine", () -> new PlaneEngineItem(
+                    new Item.Properties().stacksTo(16), PlaneEngineType.FURNACE));
+
+    public static final DeferredHolder<Item, Item> LIQUID_ENGINE =
+            ITEMS.register("liquid_engine", () -> new PlaneEngineItem(
+                    new Item.Properties().stacksTo(16), PlaneEngineType.LIQUID));
+
+    public static final DeferredHolder<Item, Item> JET_ENGINE =
+            ITEMS.register("jet_engine", () -> new PlaneEngineItem(
+                    new Item.Properties().stacksTo(16), PlaneEngineType.JET));
+
     /** 创造模式物品栏 */
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> MAIN_TAB = TABS.register("main", () -> CreativeModeTab.builder()
             .title(Component.translatable("itemGroup.minethunder"))
             .withTabsBefore(CreativeModeTabs.COMBAT)
-            .icon(() -> IR_MISSILE_FIREWORK.get().getDefaultInstance())
+            .icon(() -> SMALL_PLANE_ITEM.get().getDefaultInstance())
             .displayItems((params, output) -> {
+                output.accept(SMALL_PLANE_ITEM.get());
+                output.accept(LARGE_PLANE_ITEM.get());
+                output.accept(CARGO_PLANE_ITEM.get());
+                output.accept(FURNACE_ENGINE.get());
+                output.accept(LIQUID_ENGINE.get());
+                output.accept(JET_ENGINE.get());
                 output.accept(SARH_MISSILE_FIREWORK.get());
                 output.accept(ARH_MISSILE_FIREWORK.get());
                 output.accept(IR_MISSILE_FIREWORK.get());
