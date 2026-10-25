@@ -184,4 +184,8 @@ public final class ServerRadarState {
     public static void clear(Player player) {
         LOCKS.remove(player.getUUID());
     }
+
+    public static void clearAll() {
+        LOCKS.clear();
+    }
 }

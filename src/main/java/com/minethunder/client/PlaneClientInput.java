@@ -28,7 +28,8 @@ public final class PlaneClientInput {
         if (event.getAction() != GLFW.GLFW_PRESS) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) return;
-        if (!(mc.player.getVehicle() instanceof PlaneEntity)) return;
+        if (!(mc.player.getVehicle() instanceof PlaneEntity plane)
+                || plane.getControllingPassenger() != mc.player) return;
 
         // 任何带 Alt 或 Ctrl 的组合键全部让给雷达/导弹/干扰弹系统，绝不冲突
         int mods = event.getModifiers();
@@ -63,7 +64,8 @@ public final class PlaneClientInput {
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || !(mc.player.getVehicle() instanceof PlaneEntity plane)) {
+        if (mc.player == null || !(mc.player.getVehicle() instanceof PlaneEntity plane)
+                || plane.getControllingPassenger() != mc.player) {
             pendingActions = 0;
             return;
         }

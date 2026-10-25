@@ -125,8 +125,8 @@ public final class BvrTrackManager {
     }
 
     private static BvrKind classify(Entity entity) {
-        if (entity instanceof com.minethunder.plane.PlaneEntity) {
-            return BvrKind.AI;
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.isAirborneTarget() ? BvrKind.AI : BvrKind.GROUND;
         }
         // 飞行生物直接按空中目标处理，避免低空悬停时支撑扫描误判为地面。
         if (entity instanceof FlyingMob
@@ -135,7 +135,9 @@ public final class BvrTrackManager {
             return BvrKind.AI;
         }
         var targetClass = RadarCore.classify(entity);
-        return targetClass == RadarTargetClass.AIR ? BvrKind.AI : BvrKind.SURFACE;
+        if (targetClass == RadarTargetClass.AIR) return BvrKind.AI;
+        if (targetClass == RadarTargetClass.GROUND) return BvrKind.GROUND;
+        return BvrKind.SURFACE;
     }
 
     private static String nameOf(Entity entity) {
@@ -163,8 +165,11 @@ public final class BvrTrackManager {
                 boolean own = viewer.getUUID().equals(track.ownerUuid());
                 if (!own && distance > MISSILE_RANGE) continue;
             } else if (RadarCore.isOccludedForTarget(level, eye, track.position(),
-                    track.kind() == BvrKind.SURFACE
-                            ? RadarTargetClass.SEA : RadarTargetClass.AIR)) {
+                    switch (track.kind()) {
+                        case SURFACE -> RadarTargetClass.SEA;
+                        case GROUND -> RadarTargetClass.GROUND;
+                        default -> RadarTargetClass.AIR;
+                    })) {
                 // 被山体/地面遮挡的航迹直接不发布，避免锁定墙后目标。
                 continue;
             }

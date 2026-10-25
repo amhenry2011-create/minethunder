@@ -123,10 +123,9 @@ public abstract class MissileArrow extends AbstractArrow {
     protected boolean datalinkValid() {
         if (spec.guidance == MissileSpec.Guidance.IR) return false;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return false;
-        if (spec.guidance == MissileSpec.Guidance.SARH) return datalinkValidLocal();
         if (!(getOwner() instanceof ServerPlayer player)) return false;
         ServerRadarState.LockState state = ServerRadarState.get(player);
-        if (state == null || targetId == null) return false;
+        if (state == null || !state.radarOn() || targetId == null) return false;
         Entity target = getTarget();
         if (target == null || !target.isAlive()) return false;
         UUID bvr = state.bvrTargetUuid();
@@ -728,8 +727,7 @@ public abstract class MissileArrow extends AbstractArrow {
         if (state == null) return;
         if (!(level() instanceof ServerLevel serverLevel)) return;
         if (state.targetId() < 0) {
-            // BVR 远程锁定：ARH 专用数据链。
-            if (spec.guidance != MissileSpec.Guidance.ARH) return;
+            // BVR 远程锁定：ARH 中段数据链与 SARH 远程照射共用。
             UUID bvr = state.bvrTargetUuid();
             if (bvr == null || bvr.equals(targetId)) return;
             Entity next = serverLevel.getEntity(bvr);

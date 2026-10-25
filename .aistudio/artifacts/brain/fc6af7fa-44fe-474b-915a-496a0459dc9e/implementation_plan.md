@@ -1,162 +1,119 @@
-# MineThunder × Simple Planes 硬核拟真飞行与航电武器深度整合方案
+# MineThunder 全量审核与修复计划 (Full Codebase Audit & Remediation Plan)
 
-将 Simple Planes 的固定翼飞机与发动机系统原生移植进 MineThunder（NeoForge 1.21.1），注入微软模拟飞行（MSFS）级别的**硬核冷舱启动流程（Cold & Dark）**与**六自由度气动物理模型**，并实现与现有脉冲多普勒雷达（PD / TWS / ACM / GMI / STT）、BVR 超视距数据链、RWR 告警及 IR/SARH/ARH 导弹系统的无缝原生联动。
+## 1. 审核总结与确认决策
 
----
+通过对当前代码库（含雷达/TWS/ACM/BVR/RWR、IR/SARH/ARH 导弹制导、烟花与弓箭发射链路，以及 Simple Planes 6-DoF 飞机与冷舱航电系统）的全量静态与逻辑走查，已确认以下核心修复策略：
 
-## 用户确认与关键决策
-
-> [!IMPORTANT]
-> 以下为第一阶段已确认的设计决策，将在实现中严格执行：
-
-- **确认决策 1（移植范围）**：**仅移植固定翼飞机与核心发动机**（小型战斗/教练机 Small Plane、双座重型机 Large Plane、大型运输/武库机 Cargo Plane，以及活塞/液体燃料/涡扇加力发动机物品），不引入工作台、充电站等冗余方块与次要配件，保持模组纯粹的空战与模拟飞行核心体验。
-- **确认决策 2（模拟飞行真实度）**：采用**硬核冷舱启动（电瓶总开关 → 燃油泵/油门阀 → 磁电机/点火电门 → 按住起动机达到点火转速）+ 完整空气动力学（升阻力曲线、迎角 AoA、三档襟翼、可收放起落架、俯仰配平、失速抖振与掉头、G 值过载与黑视告警、地面轮刹）**。
-- **确认决策 3（HUD 视觉归属）**：遵循 MineThunder 视觉规范，**所有新增的飞机飞行仪表（姿态梯、速度矢量 FPV、空速/高度表、迎角/G 值、襟翼/起落架/配平状态）与冷舱启动检查单 HUD 仅绘制在主画面（屏幕中央及四周）**，绝不侵占或改动左下角雷达面板的 Demo 风格布局。
-- **确认决策 4（雷达 / BVR / 红外 / 导弹深度联动）**：
-  - **雷达与 BVR**：飞机实体原生接入雷达探测与 BVR 远距航迹广播（空中飞行归类为 `AIR`，跑道滑行/停放归类为 `GROUND` 供 `GMI` 动目标模式探测），且飞行员开启雷达时自动排除自身座驾避免自锁。
-  - **动态红外特征（IR Heat）**：发动机停机时几乎无红外特征；慢车、军用推力、加力燃烧室（WEP/Afterburner）动态放大红外辐射强度（加力状态下热量超越普通热焰弹，迫使飞行员收油门配合热焰弹机动规避 IR 导弹）。
-  - **武器与载机能量叠加**：驾驶飞机发射 SARH / ARH / IR 导弹时，导弹直接继承飞机的真实三维空速矢量并在机体碰撞箱前方安全挂点生成，高速发射显著延伸雷达面板右侧的动态不可逃逸区（NEZ）。
+1. **飞机目标空/地分类规则**：按 `PlaneEntity.isAirborneTarget()` 动态区分——离地或地速 `> 4.5 m/s` 归为空中目标（`AIR` / `BvrKind.AI`），停机或低速滑行归为地面目标（`GROUND` / `BvrKind.GROUND`），从而在 `GMI` 对地模式与 `SRC PD / TWS / ACM` 对空模式间准确切换。
+2. **双座/多座飞机乘员权限**：仅前座飞行员（`getControllingPassenger()`）控制飞行舵面、油门与冷舱航电开关（且其航电受电瓶总开关 `batteryOn` 制约）；后座乘员（WSO/乘客）不发送飞行控制指令、不被强制接管本地雷达电源，可独立操作自己的雷达与武器系统。
+3. **导弹发射快捷键防误触**：保持 `Ctrl + Alt` 组合键触发导弹发射，但新增非修饰键排他检测——当同时按下任何其他常用功能键（如 `B/R/Q/D/W/F/T/X/E` 等）时不触发导弹发射。
+4. **修复覆盖范围**：全量修复（包含 P0/P1 核心战斗、雷达与飞机联动缺陷、传统弓箭发射路径对齐，以及服务端生命周期清理与网络包安全校验）。
+5. **预览服务（Port 3000）**：已启动 3000 端口预览守护进程，直接托管 `/demo/radar-demo.html` 雷达/HUD 原型参考页面。
 
 ---
 
-## 1. 核心概念与功能总览
+## 2. 详细问题清单与修复方案
 
-- **核心体验**：玩家可在世界中部署三种不同气动特性的固定翼飞机，装填对应发动机后进入驾驶舱，按照真实飞行检查单完成冷舱通电、供油、磁电机与起动机点火，松开驻车刹车滑跑起飞；在飞行中同时操控气动面（副翼滚转、升降舵俯仰、方向舵偏航、襟翼、起落架、俯仰配平）与 MineThunder 现代机载火控雷达与制导武器。
-- **三款固定翼机型定位**：
-  1. **轻型固定翼（Small Plane / 轻型战斗教练机）**：单座、高推重比、高滚转率（最大承受 +9G / -3G），适合格斗（ACM）与高速截击。
-  2. **双座重型机（Large Plane / 双座多用途战机）**：双座（前舱飞行员 + 后舱武器/雷达观察员）、配备加力涡扇发动机与更大雷达/导弹载重（最大承受 +7.5G / -2.5G），适合 BVR 超视距拦射。
-  3. **大型货运/武库机（Cargo Plane / 重型运输机）**：多乘员舱位、大翼展高升力、长航程但滚转惯性大（最大承受 +4.5G / -1.5G），具备高雷达反射截面积（RCS）与强红外特征。
+### 2.1 [P0] SARH 半主动雷达弹对 BVR 远程目标失锁/不更新航迹
 
----
-
-## 2. 用户体验、操作流与主画面 HUD 视觉设计
-
-### 2.1 冷舱启动至起飞完整流程（Cold & Dark Checklist）
-1. **登机（冷舱状态）**：右键进入驾驶舱，此时飞机处于 `COLD & DARK`（全断电、发动机停转、驻车刹车锁死），主画面顶部/右侧浮现精简半透明的**冷舱启动检查单（Startup Checklist）**。
-2. **步骤 1 — 电瓶总电门（Master Battery，`B` 键）**：接通机载 28V 直流电源，主画面 HUD 平视显示器与机载雷达供电激活。
-3. **步骤 2 — 燃油增压泵与切断阀（Fuel Pump & Cutoff，`F` 键）**：开启主燃油管路供油（若未开油泵直接点火，起动机只会空转无法建立排气温度 EGT）。
-4. **步骤 3 — 磁电机/点火电门（Magnetos / Ignition，`G` 键循环：`OFF → L → R → BOTH`）**：接通双回路点火电门至 `BOTH`。
-5. **步骤 4 — 起动机点火（Engine Starter，`按住 I 键 1.5 秒`）**：需确保油门处于慢车位（5%–20%），按住起动机使转速（RPM）爬升越过 22% 点火门限，EGT 升温、发动机成功自主运转进入慢车（Idle RPM）。
-6. **步骤 5 — 滑跑起飞（Takeoff Roll）**：
-   - 按 `P` 解除驻车刹车（Parking Brake），按 `V` 放下起飞襟翼（`FLAPS TO 15°`）；
-   - 按住 `W` / `Up` 推油门至 100%（再次推高或按加力键进入 `110% WEP/AB` 加力燃烧）；
-   - 空速突破抬轮速度（$V_R$）后柔和拉杆（`S` / `Down` 或鼠标俯仰）离地；
-   - 离地爬升率稳定后按 `K` 收起起落架（`GEAR UP`，消除起落架寄生阻力），按 `U` 收起襟翼（`FLAPS 0°`）。
-
-### 2.2 主画面飞行 HUD 视觉布局（不触碰左下角雷达面板）
-- **视觉基调**：采用现代战机衍射平显（HUD）荧光绿（`#00FF66`）与告警琥珀黄/赤红（`#FFAA00` / `#FF3333`），与现有主画面 `TRK PD` 目标框视觉语言浑然一体：
-  - **中央姿态与速度矢量区**：中心固定机头基准符号（Waterline `W`）、随真实三维轨迹移动的**飞行路径矢量标（FPV / 速度矢量圈）**、以及随飞机俯仰角（Pitch）与滚转角（Roll）动态旋转裁剪的 **±30° 俯仰刻度梯（Pitch Ladder）**。
-  - **左侧空速带（IAS Tape）**：显示指示空速（m/s 与 kt 换算）、失速速度红线（$V_{S}$）与最大结构限速（$V_{NE}$）、油门百分比（`THR 0–100% / AB`）及转速 `RPM` / 排气温度 `EGT`。
-  - **右侧高度与垂直速度带（ALT & VSI）**：显示海拔高度（ASL）、无线电离地高度（AGL）与升降率（m/s）。
-  - **左下/右下角机务状态栏（避开雷达面板）**：显示冷舱四步开关状态（`BAT` / `FUEL` / `MAG` / `ENG`）、起落架（`GEAR DN/UP/TRANS`）、襟翼档位（`FLAP 0°/15°/40°`）、俯仰配平刻度（`TRIM`）、迎角（`AoA`）、当前过载（`G-LOAD`）与轮刹状态（`BRK`）。
-  - **失速与大过载告警**：当 `AoA > 15°` 逼近临界迎角时，主画面中央闪烁红色 `STALL WARNING` 并伴随气动抖振；当过载超过 `+7.5G` 或低于 `-2.5G` 时显示 `OVER-G` 告警与边缘黑视/红视渐晕。
+- **根因定位**：
+  - `MissileArrow.datalinkValid()`（第 125-128 行）对 `SARH` 强制调用 `datalinkValidLocal()`，而 `datalinkValidLocal()` 要求 `state.targetId() >= 0`。
+  - 当玩家在 BVR 模式下锁定远程目标发射 SARH 时，`ServerRadarState` 中 `targetId == -1`（仅 `targetUuid` 有效）。这导致：
+    1. `MissileArrow.updateDatalinkTarget()`（第 732 行）在 `state.targetId() < 0` 分支中写了 `if (spec.guidance != MissileSpec.Guidance.ARH) return;`，直接跳过了 SARH 的 BVR 目标解析。
+    2. `SarhMissileArrow.datalinkValid()` 调用 `super.datalinkValid()` 返回 `false`，导致 `updateDatalinkMeasurement()` 与 `updateTargetTrack()` 全程不更新 `measuredTargetPos` 和 `lastKnownTargetPos`，SARH 只能飞向发射瞬间的初始快照点。
+- **修复方案**：
+  - **修改 `MissileArrow.java`**：
+    - 新增 `datalinkValidBvr()` 公共判断：校验 `state.locked() && state.targetId() < 0 && state.targetUuid() != null`，且 `BvrTrackManager.find(level, state.targetUuid()) != null` 并在射手雷达有效跟踪扇区（`±PANEL_AZIMUTH_DEG` / `±SCAN_ELEVATION_HALF_DEG`）及无地形遮挡范围内。
+    - `MissileArrow.datalinkValid()` 对 `SARH` 与 `ARH` 统一支持 `datalinkValidLocal() || datalinkValidBvr()`。
+    - `MissileArrow.updateDatalinkTarget()` 的 `state.targetId() < 0` 分支允许 `ARH` 与 `SARH` 共同通过 `BvrTrackManager` 更新 `datalinkPos`、`datalinkVel` 及同维度已加载实体的 `target`。
+  - **检查 `SarhMissileArrow.java`**：
+    - 确保 `resolveTarget()` 与 `bvrIllumination()` 在 BVR 照射有效时保持半主动连续追踪，不再因 `targetId < 0` 提前断链。
 
 ---
 
-## 3. 核心架构决策与权衡
+### 2.2 [P0] `PlaneEntity` 在 `RadarCore` 与 `BvrTrackManager` 中的空/地动态分类
 
-- **决策 1：六自由度（6-DoF）真实气动物理模型替代原版简单平移**
-  - *方案*：摒弃原版 Simple Planes 简单的“按方向键直接改坐标/速度”逻辑，建立基于**推力（Thrust）、诱导与寄生阻力（Drag）、机翼升力（Lift = $\frac{1}{2}\rho v^2 S C_L(\alpha)$）与重力（Gravity）**的四力平衡方程。
-  - *原因*：用户明确要求达到微软模拟飞行级别的最高真实性。通过迎角 $\alpha$ 驱动升力系数 $C_L(\alpha)$，可自然涌现出“低速必须拉高迎角维持平飞”、“迎角过大超过临界值（~16°）升力骤降进入失速掉机头”、“放下襟翼同时增大升力与阻力降低起降失速速度”、“忘记收起落架在高速下产生巨大寄生阻力甚至超速受损”等真实飞行现象。
-- **决策 2：按键布局零冲突设计（与现有战雷雷达快捷键共存）**
-  - *方案*：完整保留现有全部 `Alt + 键` 雷达/锁定/导弹/热焰弹快捷键与 `C / Enter / Right Shift / X / H / M` 单键；飞机驾驶专属按键仅在**玩家坐在飞机驾驶位时生效**，且全部注册进 Minecraft 按键绑定设置，并在 `README.md` 中提供清晰完整的速查表。
-- **决策 3：飞机与雷达/BVR/导弹底层无缝打通**
-  - *方案*：
-    - 在 `RadarCore` 中识别 `PlaneEntity`：离地或高速滑跑判定为 `AIR`，地面静止/慢速滑行判定为 `GROUND`；同时在扫描与遮挡检测中自动豁免发射者自身所乘载具（`exclude.getRootVehicle()`）。
-    - 在 `IrHeat` 中为 `PlaneEntity` 计算实时发动机热值（冷舱 0 → 慢车 110 → 军推 220 → 加力燃烧 480），并将被骑乘飞机的热值同步叠加给飞行员目标，使红外导引头无论瞄准飞机实体还是飞行员均受引擎油门与加力状态支配。
+- **根因定位**：
+  - `RadarCore.classify(Entity)`（第 176 行）对 `PlaneEntity` 直接返回了 `RadarTargetClass.AIR`，未调用 `plane.isAirborneTarget()`。
+  - `BvrTrackManager.classify(Entity)`（第 128 行）对 `PlaneEntity` 直接返回了 `BvrKind.AI`，且 `BvrKind` 枚举缺少代表地面移动/停放载具并能映射为 `RadarTargetClass.GROUND` 的分支。
+- **修复方案**：
+  - **修改 `RadarCore.java`**：
+    - 将 `if (entity instanceof PlaneEntity) return RadarTargetClass.AIR;` 改为：`if (entity instanceof PlaneEntity plane) return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;`。
+  - **修改 `BvrKind.java`、`BvrTrackManager.java`、`TargetRegistry.java`、`RadarHudRenderer.java`**：
+    - 在 `BvrKind` 中补充 `GROUND`，并在 `BvrTrackManager.classify(Entity)` 中对 `PlaneEntity` 按 `plane.isAirborneTarget() ? BvrKind.AI : BvrKind.GROUND` 分类。
+    - 在 `TargetRegistry.classOf(BvrKind)` 中将 `BvrKind.GROUND` 映射为 `RadarTargetClass.GROUND`，确保地面滑行/停放的飞机在 `GMI` 对地模式下可被远程/本地探测，而在对空 PD 模式下不混入空中目标。
 
 ---
 
-## 4. 技术架构与数据流设计
+### 2.3 [P1] 载机速度未计入雷达动态发射包线（NEZ）与 BVR 多普勒切向衰减
 
-### 4.1 系统组件与数据流图
+- **根因定位**：
+  - `RadarHudRenderer.drawLaunchAssessment()`（第 1390-1397 行）计算导弹理想末速 `vBurn = spec.idealBurnoutSpeed()` 时未叠加发射载机（`mc.player.getRootVehicle()`）的当前速度，导致驾驶高速飞机时雷达面板右侧的动态 Rmax / NEZ 标尺不会随载机速度延伸。
+  - `RadarHudRenderer.bvrEchoAlpha()`（第 420 行）使用 `mc.player.getDeltaMovement()` 而非 `mc.player.getRootVehicle().getDeltaMovement()` 计算相对速度，导致乘机时自身速度取到接近 0，BVR 回波多普勒切向凹口（Notch）亮度计算失真。
+- **修复方案**：
+  - **修改 `RadarHudRenderer.java`**：
+    - 在 `drawLaunchAssessment()` 中获取载机前向/合成速度 `double shooterSpeed = mc.player != null ? mc.player.getRootVehicle().getDeltaMovement().length() * 20.0 : 0.0;`，将其叠加到 `vBurn = spec.idealBurnoutSpeed() + shooterSpeed`。
+    - 在 `bvrEchoAlpha()` 中改为使用 `mc.player.getRootVehicle().getDeltaMovement()` 计算 `relVel`。
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        Client Input & Cockpit Control                        │
-│  ┌─────────────────────────┐    ┌─────────────────────────────────────────┐  │
-│  │ Flight Control Keys     │    │ Cold & Dark Startup Keys                │  │
-│  │ Pitch/Roll/Yaw (WASD/QE)│    │ [B] Battery  [F] Fuel Pump  [G] Magneto │  │
-│  │ Throttle/AB, Flaps [U/V]│    │ [Hold I] Starter  [P] Park Brake        │  │
-│  │ Gear [K], Trim [ [ / ] ]│    └───────────────────┬─────────────────────┘  │
-│  └────────────┬────────────┘                        │                        │
-└───────────────┼─────────────────────────────────────┼────────────────────────┘
-                ▼                                     ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                     Network Payload: PlaneControlPacket                      │
-└───────────────────────────────────────┬──────────────────────────────────────┘
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                 Server-Authoritative Aircraft Simulation                     │
-│  ┌────────────────────────────────────┐  ┌────────────────────────────────┐  │
-│  │ Engine & Electrical State Machine  │  │ 6-DoF Flight Dynamics Solver   │  │
-│  │ • Master Battery (28V DC Bus)      │  │ • Airspeed (IAS), AoA (α), β   │  │
-│  │ • Fuel Valve & Pump Pressure       │  │ • Lift C_L(α, Flaps) & Stall   │  │
-│  │ • Magnetos (OFF / L / R / BOTH)    │  │ • Drag C_D(α, Gear, Flaps, M)  │  │
-│  │ • Starter Spool → Idle → Mil → AB  │  │ • Pitch/Roll/Yaw Moments & Trim│  │
-│  │ • EGT Temperature & Overheat       │  │ • G-Load & Runway Wheel Physics│  │
-│  └─────────────────┬──────────────────┘  └───────────────┬────────────────┘  │
-└────────────────────┼─────────────────────────────────────┼───────────────────┘
-                     │                                     │
-         ┌───────────┴───────────┐             ┌───────────┴───────────┐
-         ▼                       ▼             ▼                       ▼
-┌─────────────────┐   ┌───────────────────┐   ┌─────────────────┐   ┌──────────────────┐
-│ IrHeat System   │   │ RadarCore & BVR   │   │ Missile Launch  │   │ Main Screen HUD  │
-│ Dynamic IR Heat │   │ • AIR / GROUND    │   │ • Carrier Vel   │   │ • Pitch Ladder   │
-│ • Cold: 0       │   │ • BVR 1000b Track │   │ • Pylon Offset  │   │ • FPV & IAS/ALT  │
-│ • Idle: 110     │   │ • Self-Vehicle    │   │ • Dynamic NEZ   │   │ • AoA / G / Trim │
-│ • Mil: 220      │   │   Exclusion       │   │   Expansion     │   │ • Cold & Dark    │
-│ • AB/WEP: 480   │   │ • RWR Warning     │   │                 │   │   Checklist HUD  │
-└─────────────────┘   └───────────────────┘   └─────────────────┘   └──────────────────┘
-```
+---
 
-### 4.2 数据模型与状态同步（`SynchedEntityData` & NBT 持久化）
-每架固定翼飞机实体（`PlaneEntity` 及其子类 `SmallPlaneEntity`、`LargePlaneEntity`、`CargoPlaneEntity`）维护并实时同步以下核心状态（退出存档重进完整保留）：
-- **动力与冷舱电门状态**：
-  - `masterBattery`（布尔：总电源开关）
-  - `fuelPump`（布尔：燃油增压泵与供油阀）
-  - `magnetoState`（整型：`0=OFF, 1=LEFT, 2=RIGHT, 3=BOTH`）
-  - `starterEngaged`（布尔：起动机按压状态）
-  - `engineRunning`（布尔：发动机是否完成点火自主运行）
-  - `engineType`（枚举：`FURNACE` 活塞固燃 / `LIQUID` 航空燃油 / `JET` 涡扇加力）
-  - `rpmNormalized`（浮点 `0.0–1.15`：当前真实转速百分比）
-  - `egtCelsius`（浮点：排气温度，反映点火升温、加力高温与超温故障）
-  - `throttle`（浮点 `0.0–1.10`：`0–100%` 常规推力，`101–110%` 加力燃烧 WEP/AB）
-- **飞控与构型状态**：
-  - `pitchDeg`、`yawDeg`、`rollDeg`（连续三维欧拉姿态角及上一帧插值，彻底解决原版载具视角卡顿）
-  - `flapStage`（整型：`0=0° 收起, 1=15° 起飞/机动, 2=40° 着陆`）
-  - `gearDown` & `gearProgress`（布尔与 `0.0–1.0` 收放过渡进度）
-  - `parkingBrake`（布尔：驻车刹车锁死）
-  - `elevatorTrimDeg`（浮点 `-10° ~ +10°`：升降舵俯仰配平）
-  - `aoaDeg`（当前真实迎角 $\alpha$）、`gLoad`（当前法向过载 $n_z$）、`stalling`（失速标志位）
+### 2.4 [P1] 多座飞机（Large / Cargo Plane）前后座权限分离与防自锁
 
-### 4.3 交互组件与快捷键映射（无冲突设计并写入 `README.md`）
-| 功能分类 | 快捷键（默认值，支持设置改绑） | 行为与状态转移说明 |
-| :--- | :--- | :--- |
-| **冷舱启动：电瓶总开关** | `B` | 切换机载主电瓶供电（断电时 HUD 与雷达关闭，起动机无法工作） |
-| **冷舱启动：燃油泵/供油阀** | `F` | 切换燃油泵供油（关闭时发动机立刻断油熄火，可用于紧急关车） |
-| **冷舱启动：磁电机/点火器** | `G` | 循环切换点火电门 `OFF → LEFT → RIGHT → BOTH`（单磁电机损失 8% 推力） |
-| **冷舱启动：起动机（点火）** | `按住 I`（乘机时） | 当电瓶、燃油、磁电机就绪且油门在 5–25% 时，按住 1.5 秒带动涡轮/曲轴完成点火 |
-| **节流阀（油门递增 / 递减）** | `Up / Down` 或 `R / F (可选微调)` / 滚轮 | 连续调节 0%–100% 推力；在 100% 时继续按推入 `AB / WEP (110%)` 加力燃烧室 |
-| **俯仰（拉杆 / 推杆）** | `S`（拉杆抬头）/ `W`（推杆低头） | 控制升降舵力矩改变俯仰角速率（支持平滑回中与阻尼） |
-| **滚转（左副翼 / 右副翼）** | `A`（左滚转）/ `D`（右滚转） | 控制副翼产生滚转角速率，配合拉杆实现协调盘旋 |
-| **偏航（左方向舵 / 右方向舵）** | `Z` / `E (非Alt)` 或地面滑行转向 | 空中控制方向舵协调侧滑角 $\beta$，地面滑跑时联动前轮转向 |
-| **襟翼收放（Flaps Up / Down）** | `U`（收一档）/ `V`（放一档） | 在 `0° (CLEAN) ↔ 15° (TAKEOFF) ↔ 40° (LANDING)` 之间切换；超速放襟翼会告警 |
-| **起落架收放（Landing Gear）** | `K` | 切换起落架收起/放下（需 2 秒液压过渡时间；地面无法收起防止误触擦地） |
-| **驻车刹车 / 机轮刹车** | `P`（驻车锁）/ `Space`（点刹） | `P` 切换驻车制动（冷舱默认锁死）；滑跑着陆时按住 `Space` 最大轮刹减速 |
-| **升降舵俯仰配平（Trim）** | `[`（低头配平）/ `]`（抬头配平） | 调节配平片角度，抵消不同速度下的杆力，实现松手稳定平飞或恒定爬升 |
-| **机载雷达 / 导引头 / 导弹 / 热焰** | 原有 `Alt+R/B/F/T/Q/D/W/X/E` 及 `Ctrl+Alt` | 在驾驶舱内 100% 原生可用；当主电瓶 `BAT OFF` 时机载雷达自动断电待机 |
+- **根因定位**：
+  - `PlaneClientInput.onClientTick()`（第 48-55 行）仅检查 `mc.player.getVehicle() instanceof PlaneEntity plane`，未区分前座飞行员（`plane.getControllingPassenger() == mc.player`）与后座乘员。后座乘员不仅每 tick 向服务端发送 `PlaneControlPacket`，还会被飞行员的电瓶状态强制关闭自身 `RadarHud.radarOn`。
+  - `TrackedTarget.isOwnedBy(Player)`（第 91-94 行）未排除 `player.getRootVehicle().getUUID()`，当玩家乘坐飞机且飞机有 BVR 航迹时，客户端 `TargetRegistry` 可能将自身座机纳入候选目标。
+- **修复方案**：
+  - **修改 `PlaneClientInput.java`**：
+    - 仅当 `plane.getControllingPassenger() == mc.player` 时才接管飞行控制按键、发送 `PlaneControlPacket` 以及执行冷舱电瓶断电对 `RadarHud.radarOn / seekerEnabled / seekerActive` 的联动限制；后座乘员可独立开关并使用个人雷达与导弹导引头。
+  - **修改 `TrackedTarget.java`**：
+    - 在 `isOwnedBy(Player player)` 中增加对 `player.getRootVehicle().getUUID().equals(uuid)` 的排除判断，彻底杜绝 BVR 扫到或锁定自身所乘飞机。
 
-### 4.4 与现有雷达、BVR、红外与导弹系统的精确兼容细则
-1. **雷达探测与分类（`RadarCore`）**：
-   - 新增对 `PlaneEntity` 的识别：若飞机离地高度 $> 1.2\text{ m}$ 或空速 $> 12\text{ m/s}$，归类为 `RadarTargetClass.AIR`（在 `SRC / SRC PD / TWS / ACM / STT` 下均可被探测、软跟踪与硬锁定）；若在跑道慢速滑行（速度 $\ge 0.5\text{ m/s}$ 且在地面），归类为 `RadarTargetClass.GROUND`（在 `GMI` 对地动目标模式下清晰可见）。
-   - 自机过滤：在 `RadarCore.scan` 与 `isOccluded` 中，若候选实体是发射者正在骑乘的 `PlaneEntity`（或其同机乘客），直接排除，杜绝机头雷达扫到自身机体的异常。
-2. **BVR 超视距数据链与区块强加载（`BvrTrackManager` & `BvrTicketService`）**：
-   - 飞行中的有人驾驶或带标签飞机自动纳入 1000 格 BVR 航迹广播，并在雷达面板上按空中航迹绘制速度矢量与 TWS 跟踪符号。
-3. **动态红外热源模型（`IrHeat`）**：
-   - `PlaneEntity` 的红外辐射热量公式：
-     $$\text{Heat} = \begin{cases} 0 & \text{发动机停转且冷却} \\ 110 + 130 \times \text{Throttle} & \text{常规推力 (0–100\%)} \\ 480 & \text{加力燃烧 (AB / WEP > 100\%)} \end{cases}$$
-   - 当红外导弹追踪飞机或机上飞行员时，读取该实时引擎热值：若飞行员开着加力燃烧（480 热量），单发普通热焰弹（200 热量）将难以诱骗导弹，必须像真实空战一样**先收油门退出加力 + 释放热焰弹 + 大过载机动**才能成功摆脱。
-4. **合成配方、创造模式物品栏与测试指令扩展**：
-   - 在 `MineThunder` 创造模式标签页中加入三款固定翼飞机物品与三款航空发动机物品，并提供原版生存合成配方。
-   - 扩展 `/minethunder test` 指令：支持生成自动驾驶巡航/盘旋的靶机编队（`/minethunder test plane`），方便单人实机测试雷达锁定、BVR 拦射与格斗追尾。
+---
+
+### 2.5 [P1] `Ctrl + Alt` 发射快捷键防误触与传统弓箭发射逻辑对齐
+
+- **根因定位**：
+  - `KeyInputHandler.onClientTick()`（第 294-298 行）在检测到 `altDown && isCtrlDown()` 时立即触发 `fireMissile(mc)`，未检查是否同时按下了其他按键（如 `Ctrl+Alt+B` 等组合误触）。
+  - `MissileEvents.onArrowLoose()`（传统弓箭发射路径，第 72-116 行）仍使用旧版硬编码 `±90°/±40°` 扫描限制与 `RadarCore.isOccluded`，未与 `MissileLaunchService` 的导引头最大离轴角（`spec.lockAngleMax`）及 `RadarCore.isOccludedForTarget` 对齐，且 `cancel(event, message)` 忽略了 `message` 参数导致发射失败无提示。
+- **修复方案**：
+  - **修改 `KeyInputHandler.java`**：
+    - 新增辅助方法 `hasOtherActionKeyDown(long window)`，当检测到常用字母/数字/方向键同时按下时，不触发 `Ctrl + Alt` 导弹发射。
+  - **修改 `MissileEvents.java`**：
+    - 将 `onArrowLoose()` 的雷达弹/红外弹发射校验与 `MissileLaunchService` 对齐（使用 `spec.lockAngleMax` 离轴角、`RadarCore.isOccludedForTarget`，并支持 BVR 远程锁发射），且在 `cancel()` 时通过 `player.displayClientMessage(Component.literal(message), true)` 向玩家显示取消原因。
+
+---
+
+### 2.6 [P2] 服务端状态生命周期清理与网络包安全校验
+
+- **根因定位**：
+  - `ServerRadarState.LOCKS` 在服务器停止或重启时缺少清理钩子，跨存档可能残留旧 `Player UUID` 锁定状态。
+  - `RwrPaintPacket.handle()` 未校验目标玩家与发送者处于同一 `Level` 且距离在合理雷达探测上限（如 `<= 1500m`）内。
+- **修复方案**：
+  - **修改 `ServerRadarState.java`**：新增 `clearAll()` 并在服务器停止事件中调用。
+  - **修改 `RwrPaintPacket.java`**：在 `handle()` 中校验 `sender.level() == targetPlayer.level()` 且距离 `<= 1500.0`。
+
+---
+
+## 3. 涉及修改的文件列表
+
+1. `/src/main/java/com/minethunder/missile/MissileArrow.java`
+2. `/src/main/java/com/minethunder/missile/SarhMissileArrow.java`
+3. `/src/main/java/com/minethunder/missile/MissileEvents.java`
+4. `/src/main/java/com/minethunder/radar/RadarCore.java`
+5. `/src/main/java/com/minethunder/radar/BvrKind.java`
+6. `/src/main/java/com/minethunder/radar/BvrTrackManager.java`
+7. `/src/main/java/com/minethunder/radar/ServerRadarState.java`
+8. `/src/main/java/com/minethunder/client/TargetRegistry.java`
+9. `/src/main/java/com/minethunder/client/TrackedTarget.java`
+10. `/src/main/java/com/minethunder/client/RadarHudRenderer.java`
+11. `/src/main/java/com/minethunder/client/PlaneClientInput.java`
+12. `/src/main/java/com/minethunder/client/KeyInputHandler.java`
+13. `/src/main/java/com/minethunder/network/RwrPaintPacket.java`
+
+---
+
+## 4. 验证与发布流程
+
+1. 执行 `./gradlew build --no-daemon --console=plain` 验证全量编译与类型检查零报错。
+2. 升级版本号并更新 `HANDOFF.md` / `STATUS.md` 记录本次全量审核修复项。
+3. 按照 `minethunder-auto-release` 规范打包、复制产物并提交推送至仓库。

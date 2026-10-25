@@ -53,32 +53,35 @@ public final class MissileEvents {
         if (spec.guidance == MissileSpec.Guidance.IR) {
             // 旧弓兼容路径：仍要求满弓。
             if (event.getCharge() < FULL_DRAW_TICKS) {
-                event.setCanceled(true);
+                cancel(event, player, "红外弹需拉满弓以完成导引头预热");
                 return;
             }
             var target = IrTargeting.findTarget(
                     player.level(), player, null, spec);
             if (target == null) {
-                event.setCanceled(true);
+                cancel(event, player, "导引头视场内无有效热源目标");
             }
             return;
         }
 
-        // 雷达弹：服务端使用客户端同步的锁定/导引头状态做权威校验
+        // 雷达弹：服务端使用客户端同步的锁定/导引头状态做权威校验（含 BVR 远程锁）
         ServerRadarState.LockState lock = ServerRadarState.get(player);
         Entity target = ServerRadarState.getTarget(player);
-        if (lock == null || target == null || !target.isAlive()) {
+        if (target == null) {
+            target = ServerRadarState.getBvrTarget(player);
+        }
+        if (lock == null || !lock.radarOn() || target == null || !target.isAlive()) {
             cancel(event, player, "无有效雷达锁定，发射取消");
             return;
         }
         if (spec.guidance == MissileSpec.Guidance.ARH
-                && lock.seekerState() < SeekerLockModel.State.ACQUIRING.ordinal()) {
-            cancel(event, player, "导引头尚未对准目标，ARH 禁止发射");
+                && !ServerRadarState.canLaunchArh(player)) {
+            cancel(event, player, "ARH 需雷达跟踪或硬锁定目标");
             return;
         }
         if (spec.guidance == MissileSpec.Guidance.SARH
-                && lock.seekerState() < SeekerLockModel.State.TRACKING.ordinal()) {
-            cancel(event, player, "SARH 需等待红色倒计时环");
+                && !ServerRadarState.canLaunchSarh(player)) {
+            cancel(event, player, "SARH 需等待红色锁定环");
             return;
         }
         if (player.distanceTo(target) > spec.maxDistance) {
@@ -89,21 +92,24 @@ public final class MissileEvents {
         Vec3 targetPos = target.getBoundingBox().getCenter();
         Vec3 look = player.getViewVector(1.0F).normalize();
         Vec3 to = targetPos.subtract(eye);
-        double az = Math.toDegrees(RadarCore.azimuthBetween(look, to));
-        double el = Math.toDegrees(RadarCore.elevationBetween(look, to));
-        if (Math.abs(az) > 90 || Math.abs(el) > 40) {
-            cancel(event, player, "目标不在雷达扫描范围内");
-            return;
+        if (to.lengthSqr() > 1.0E-6) {
+            double angleDeg = Math.toDegrees(Math.acos(
+                    Math.max(-1.0, Math.min(1.0, look.dot(to.normalize())))));
+            if (angleDeg > spec.lockAngleMaxDeg) {
+                cancel(event, player, "目标超出导弹导引头最大离轴角");
+                return;
+            }
         }
-        if (RadarCore.isOccluded(player.level(), eye, targetPos)) {
+        if (RadarCore.isOccludedForTarget(player.level(), eye, targetPos,
+                RadarCore.classify(target))) {
             cancel(event, player, "目标被地形遮挡，无法照射");
             return;
         }
+    }
 
-        RadarMode mode = lock.radarMode() >= 0 && lock.radarMode() < RadarMode.values().length
-                ? RadarMode.values()[lock.radarMode()] : RadarMode.SRC_PD;
-        // 39 只降低锁定/跟踪质量，不再在服务端直接禁止发射。
-        // 近距离烧穿和渐隐/拖锁由客户端航迹质量表现。
+    @SubscribeEvent
+    public static void onServerStopped(net.neoforged.neoforge.event.server.ServerStoppedEvent event) {
+        ServerRadarState.clearAll();
     }
 
     private static MissileSpec findBowMissile(Player player, ItemStack bow) {
@@ -113,5 +119,8 @@ public final class MissileEvents {
 
     private static void cancel(ArrowLooseEvent event, Player player, String message) {
         event.setCanceled(true);
+        if (message != null && !message.isEmpty()) {
+            player.displayClientMessage(Component.literal(message), true);
+        }
     }
 }

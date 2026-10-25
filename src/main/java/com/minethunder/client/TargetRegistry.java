@@ -229,10 +229,11 @@ public final class TargetRegistry {
         return mc.level == null ? null : mc.level.getEntity(entityId);
     }
 
-    private static RadarTargetClass classOf(BvrTrack track) {
+    public static RadarTargetClass classOf(BvrTrack track) {
         return switch (track.kind()) {
             case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
             case SURFACE -> RadarTargetClass.SEA;
+            case GROUND -> RadarTargetClass.GROUND;
         };
     }
 }

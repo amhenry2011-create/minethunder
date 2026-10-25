@@ -264,6 +264,7 @@ public final class RadarHudRenderer {
             RadarTargetClass bvrClass = switch (track.kind()) {
                 case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
                 case SURFACE -> RadarTargetClass.SEA;
+                case GROUND -> RadarTargetClass.GROUND;
             };
             if (!RadarHud.currentMode.accepts(bvrClass)) continue;
             boolean isLockedBvr = RadarHud.isLockedTarget(track.uuid());
@@ -305,7 +306,7 @@ public final class RadarHudRenderer {
                     case PLAYER -> RadarIconType.PLAYER;
                     case AI -> RadarIconType.LIVING;
                     case MISSILE -> RadarIconType.MISSILE;
-                    case SURFACE -> RadarIconType.BLOCK;
+                    case SURFACE, GROUND -> RadarIconType.BLOCK;
                 };
                 float bvrAlpha = isLockedBvr ? 1f : bvrEchoAlpha(velocity, toBvr, dist);
                 int color = alphaColor(isLockedBvr ? WHITE : GREEN, bvrAlpha);
@@ -417,7 +418,9 @@ public final class RadarHudRenderer {
 
     /** BVR 点亮度与本地接触同规：按相对径向速度（notch）调制，无盲区时保持原基础亮度。 */
     private static float bvrEchoAlpha(Vec3 velocity, Vec3 toBvr, double dist) {
-        double radial = velocity.subtract(Minecraft.getInstance().player.getDeltaMovement())
+        Vec3 ownVel = Minecraft.getInstance().player == null ? Vec3.ZERO
+                : Minecraft.getInstance().player.getRootVehicle().getDeltaMovement();
+        double radial = velocity.subtract(ownVel)
                 .scale(20.0).dot(toBvr.normalize());
         double severity = RadarCore.notchSeverity(radial, dist, RadarHud.currentMode);
         if (severity == 0.0) return 0.7f;
@@ -1387,10 +1390,12 @@ public final class RadarHudRenderer {
             }
         }
 
-        // NEZ：按发动机理想末速（真空 Δv）与目标速度动态估算。
-        double vBurn = spec.idealBurnoutSpeed();
+        // NEZ：按发动机理想末速（真空 Δv）叠加载机当前速度与目标速度动态估算。
+        double carrierSpeed = mc.player == null ? 0.0
+                : mc.player.getRootVehicle().getDeltaMovement().length() * 20.0;
+        double vBurn = spec.idealBurnoutSpeed() + carrierSpeed;
         double vt = Math.max(0.0, targetSpeed);
-        double vRatio = Math.max(0.15, Math.min(0.9, (vBurn - vt) / Math.max(vBurn, 1.0)));
+        double vRatio = Math.max(0.15, Math.min(0.95, (vBurn - vt) / Math.max(vBurn, 1.0)));
         double nezMax = rMax * vRatio;
         double nezMin = Math.max(10.0, rMax * 0.05 + vt * 0.5);
         nezMax = Math.min(nezMax, rMax * 0.95);

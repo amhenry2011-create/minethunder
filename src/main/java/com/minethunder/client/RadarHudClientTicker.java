@@ -1397,6 +1397,7 @@ public final class RadarHudClientTicker {
             RadarTargetClass cls = switch (track.kind()) {
                 case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
                 case SURFACE -> RadarTargetClass.SEA;
+                case GROUND -> RadarTargetClass.GROUND;
             };
             if (!RadarHud.currentMode.accepts(cls)) continue;
             Vec3 pos = BvrState.lagCompensatedPosition(track);

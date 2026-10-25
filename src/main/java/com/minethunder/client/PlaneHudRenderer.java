@@ -43,8 +43,13 @@ public final class PlaneHudRenderer {
         int cx = screenW / 2;
         int cy = screenH / 2;
 
-        // 1. 大过载黑视/红视渐晕 (G-LOC Vignette)
+        // 1. 大过载黑视/红视渐晕 (G-LOC Vignette，全机乘员共享机体过载)
         renderGLocOverlay(g, screenW, screenH, plane);
+
+        // 后座乘员（WSO/乘客）专注独立操作雷达与武器，不显示前座飞行员专属平显与冷舱开关面板
+        if (plane.getControllingPassenger() != mc.player) {
+            return;
+        }
 
         // 2. 右上角冷舱启动状态面板 & 机务构型栏 (即使电瓶未开也显示机械开关状态)
         renderCockpitSystemsPanel(g, font, screenW, screenH, plane);
