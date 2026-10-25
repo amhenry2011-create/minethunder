@@ -22,7 +22,7 @@ public record RwrPaintPacket(int targetId) implements CustomPacketPayload {
     }
 
     public void handle(IPayloadContext context) {
-        if (context.player() instanceof ServerPlayer player) {
+        if (targetId >= 0 && context.player() instanceof ServerPlayer player) {
             RwrManager.recordPaint(player, targetId);
         }
     }

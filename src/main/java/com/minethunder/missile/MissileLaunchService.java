@@ -23,7 +23,11 @@ public final class MissileLaunchService {
         MissileArrow missile = type.create(level);
         if (missile == null) return null;
         Vec3 look = player.getViewVector(1.0F).normalize();
-        Vec3 spawn = player.getEyePosition().add(look.scale(0.8));
+        double forwardDist = 0.8;
+        if (player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane) {
+            forwardDist = plane.getBbWidth() * 0.85 + 1.5;
+        }
+        Vec3 spawn = player.getEyePosition().add(look.scale(forwardDist));
         missile.setPos(spawn.x, spawn.y - 0.1, spawn.z);
         missile.setOwner(player);
         if (missile instanceof SarhMissileArrow sarh) {

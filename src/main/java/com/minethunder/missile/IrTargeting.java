@@ -37,8 +37,14 @@ public final class IrTargeting {
         List<Entity> candidates = new ArrayList<>();
         AABB area = shooter.getBoundingBox().inflate(
                 Math.max(spec.acquireRange(), spec.rearAspectLockRange));
+        Entity shooterRoot = shooter.getRootVehicle();
+        for (com.minethunder.plane.PlaneEntity plane : level.getEntitiesOfClass(
+                com.minethunder.plane.PlaneEntity.class, area,
+                p -> p != shooterRoot && p.isAlive())) {
+            candidates.add(plane);
+        }
         for (LivingEntity living : level.getEntitiesOfClass(LivingEntity.class, area,
-                e -> e != shooter && e.isAlive())) {
+                e -> e != shooter && e.getRootVehicle() != shooterRoot && e.isAlive())) {
             candidates.add(living);
         }
         for (CountermeasureEntity flare : level.getEntitiesOfClass(CountermeasureEntity.class, area,
@@ -83,7 +89,8 @@ public final class IrTargeting {
     }
 
     public static boolean valid(Level level, Player shooter, Entity target, MissileSpec spec) {
-        if (target == null || !target.isAlive() || target == shooter) return false;
+        if (target == null || !target.isAlive() || target == shooter
+                || target == shooter.getRootVehicle()) return false;
         if (IrHeat.heat(target) < HEAT_THRESHOLD) return false;
 
         boolean sun = isSunMarker(target);

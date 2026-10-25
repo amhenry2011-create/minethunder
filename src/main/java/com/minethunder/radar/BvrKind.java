@@ -8,8 +8,10 @@ public enum BvrKind {
     AI,
     /** 飞行中的导弹 */
     MISSILE,
-    /** 地面/海面 BVR 标签目标 */
-    SURFACE;
+    /** 海面 BVR 标签目标 */
+    SURFACE,
+    /** 地面 BVR 目标（含停机/滑行阶段的飞机与地面移动目标） */
+    GROUND;
 
     public boolean isAir() {
         return this == PLAYER || this == AI;

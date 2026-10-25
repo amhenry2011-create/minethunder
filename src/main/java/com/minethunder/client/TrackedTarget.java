@@ -90,6 +90,7 @@ public final class TrackedTarget {
 
     public boolean isOwnedBy(Player player) {
         if (player.getUUID().equals(uuid)) return true;
+        if (player.getRootVehicle().getUUID().equals(uuid)) return true;
         return bvr != null && player.getUUID().equals(bvr.ownerUuid());
     }
 

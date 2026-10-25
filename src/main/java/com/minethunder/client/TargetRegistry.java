@@ -47,7 +47,8 @@ public final class TargetRegistry {
         }
 
         for (BvrTrack track : BvrState.active()) {
-            if (player.getUUID().equals(track.uuid())) continue;
+            if (player.getUUID().equals(track.uuid())
+                    || player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             if (track.kind() == BvrKind.MISSILE
                     && player.getUUID().equals(track.ownerUuid())) continue;
             RadarTargetClass targetClass = classOf(track);
@@ -228,10 +229,11 @@ public final class TargetRegistry {
         return mc.level == null ? null : mc.level.getEntity(entityId);
     }
 
-    private static RadarTargetClass classOf(BvrTrack track) {
+    public static RadarTargetClass classOf(BvrTrack track) {
         return switch (track.kind()) {
             case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
             case SURFACE -> RadarTargetClass.SEA;
+            case GROUND -> RadarTargetClass.GROUND;
         };
     }
 }

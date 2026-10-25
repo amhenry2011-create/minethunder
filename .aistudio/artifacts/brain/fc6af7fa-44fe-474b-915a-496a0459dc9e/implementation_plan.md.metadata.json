@@ -1,0 +1,6 @@
+{
+  "summary":  "MineThunder 全量代码审核与修复计划（覆盖 SARH 超视距制导修复、PlaneEntity 空地雷达与 BVR 动态分类、载机速度对动态包线 NEZ 与多普勒回波的修正、多乘员前后座职责分离、Ctrl+Alt 防误触、传统弓箭发射逻辑对齐及服务端状态生命周期与安全校验，并已启动 3000 端口雷达交互 Demo 预览服务）。",
+  "updatedAt":  "2026-10-25T06:55:04.955893059Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

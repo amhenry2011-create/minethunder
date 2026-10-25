@@ -1,6 +1,7 @@
 package com.minethunder.missile;
 
 import com.minethunder.radar.RadarCore;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -17,16 +18,19 @@ public final class MissileTargeting {
      * 在发射者视线方向上寻找最近的、未被遮挡的存活目标。
      * @param coneDeg 视线锥半张角（度）：红外弹用 lockAngleMax，雷达弹用锁定角
      */
-    public static LivingEntity findLookTarget(Level level, LivingEntity shooter, double maxRange, double coneDeg) {
+    public static Entity findLookTarget(Level level, LivingEntity shooter, double maxRange, double coneDeg) {
         Vec3 eye = shooter.getEyePosition();
         Vec3 look = shooter.getViewVector(1.0F).normalize();
         double cosLimit = Math.cos(Math.toRadians(coneDeg));
+        Entity shooterRoot = shooter.getRootVehicle();
 
-        LivingEntity best = null;
+        Entity best = null;
         double bestDist = Double.MAX_VALUE;
         AABB area = shooter.getBoundingBox().inflate(maxRange);
-        for (LivingEntity e : level.getEntitiesOfClass(LivingEntity.class, area,
-                e -> e != shooter && e.isAlive())) {
+        for (Entity e : level.getEntities(shooter, area,
+                e -> e != shooter && e != shooterRoot && e.getRootVehicle() != shooterRoot
+                        && e.isAlive()
+                        && (e instanceof LivingEntity || e instanceof com.minethunder.plane.PlaneEntity))) {
             Vec3 targetPos = e.getBoundingBox().getCenter();
             Vec3 to = targetPos.subtract(eye);
             double dist = to.length();
@@ -46,3 +50,4 @@ public final class MissileTargeting {
         return best;
     }
 }
+

@@ -123,10 +123,9 @@ public abstract class MissileArrow extends AbstractArrow {
     protected boolean datalinkValid() {
         if (spec.guidance == MissileSpec.Guidance.IR) return false;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return false;
-        if (spec.guidance == MissileSpec.Guidance.SARH) return datalinkValidLocal();
         if (!(getOwner() instanceof ServerPlayer player)) return false;
         ServerRadarState.LockState state = ServerRadarState.get(player);
-        if (state == null || targetId == null) return false;
+        if (state == null || !state.radarOn() || targetId == null) return false;
         Entity target = getTarget();
         if (target == null || !target.isAlive()) return false;
         UUID bvr = state.bvrTargetUuid();
@@ -146,7 +145,9 @@ public abstract class MissileArrow extends AbstractArrow {
 
     /** 用载机速度 + 导弹初速初始化发射速度；有目标时直接朝预测拦截点发射。 */
     public void initializeLaunch(LivingEntity shooter) {
-        Vec3 carrier = shooter.getDeltaMovement();
+        Vec3 carrier = shooter.isPassenger()
+                ? shooter.getRootVehicle().getDeltaMovement()
+                : shooter.getDeltaMovement();
         double carrierMps = carrier.length() * 20.0;
         double relativeMps = spec.startSpeed > 0 ? spec.startSpeed : 20.0;
         Vec3 look = shooter.getViewVector(1.0F).normalize();
@@ -192,10 +193,13 @@ public abstract class MissileArrow extends AbstractArrow {
         return targetId;
     }
 
-    /** 当前导弹是否以该实体为目标（用于 RWR 来袭告警）。 */
+    /** 当前导弹是否以该实体或其所乘载具为目标（用于 RWR 来袭告警）。 */
     public boolean isTargeting(Entity entity) {
         UUID id = getTargetUuid();
-        return id != null && id.equals(entity.getUUID());
+        if (id == null) return false;
+        if (id.equals(entity.getUUID())) return true;
+        Entity vehicle = entity.getVehicle();
+        return vehicle != null && id.equals(vehicle.getUUID());
     }
 
     @Override
@@ -535,6 +539,10 @@ public abstract class MissileArrow extends AbstractArrow {
         for (CountermeasureEntity decoy : level().getEntitiesOfClass(
                 CountermeasureEntity.class, getBoundingBox().inflate(48.0))) {
             if (!decoy.isAlive() || !decoy.deceives(threat)) continue;
+            if (threat == Countermeasure.MissileThreat.INFRARED && currentTarget != null) {
+                // 若目标当前开启加力燃烧室等强热源，热值远高于热焰弹（> 1.4x），热焰弹无法诱偏导引头
+                if (IrHeat.heat(currentTarget) > IrHeat.heat(decoy) * 1.4) continue;
+            }
             Vec3 decoyCenter = decoy.getBoundingBox().getCenter();
             if (RadarCore.isOccluded(level(), pos, decoyCenter)) continue;
             Vec3 to = decoyCenter.subtract(pos);
@@ -719,8 +727,7 @@ public abstract class MissileArrow extends AbstractArrow {
         if (state == null) return;
         if (!(level() instanceof ServerLevel serverLevel)) return;
         if (state.targetId() < 0) {
-            // BVR 远程锁定：ARH 专用数据链。
-            if (spec.guidance != MissileSpec.Guidance.ARH) return;
+            // BVR 远程锁定：ARH 中段数据链与 SARH 远程照射共用。
             UUID bvr = state.bvrTargetUuid();
             if (bvr == null || bvr.equals(targetId)) return;
             Entity next = serverLevel.getEntity(bvr);
@@ -918,9 +925,13 @@ public abstract class MissileArrow extends AbstractArrow {
                 other.detonate(null);
             }
             if (!testMissile) {
-                if (target instanceof LivingEntity living) {
-                    living.hurt(level().damageSources().explosion(this, getOwner()),
-                            EXPLOSION_DAMAGE);
+                if (target != null) {
+                    target.hurt(level().damageSources().explosion(this, getOwner()),
+                            EXPLOSION_DAMAGE * 2.4f);
+                    for (Entity passenger : target.getPassengers()) {
+                        passenger.hurt(level().damageSources().explosion(this, getOwner()),
+                                EXPLOSION_DAMAGE);
+                    }
                 }
                 level().explode(this,
                         level().damageSources().explosion(this, getOwner()),
