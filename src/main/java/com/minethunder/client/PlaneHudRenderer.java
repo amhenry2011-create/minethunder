@@ -47,7 +47,7 @@ public final class PlaneHudRenderer {
         renderGLocOverlay(g, screenW, screenH, plane);
 
         // 后座乘员（WSO/乘客）专注独立操作雷达与武器，不显示前座飞行员专属平显与冷舱开关面板
-        if (plane.getControllingPassenger() != mc.player) {
+        if (!plane.isPilot(mc.player)) {
             return;
         }
 
@@ -232,7 +232,7 @@ public final class PlaneHudRenderer {
     private static void renderCockpitSystemsPanel(GuiGraphics g, Font font, int screenW, int screenH,
                                                   PlaneEntity plane) {
         int boxW = 192;
-        int boxH = plane.isEngineRunning() ? 66 : 94;
+        int boxH = plane.isEngineRunning() ? 78 : 94;
         int x = screenW - boxW - 8;
         int y = 8;
 
@@ -265,6 +265,10 @@ public final class PlaneHudRenderer {
         if (plane.isEngineRunning()) {
             String engLine = "ENG: RUNNING (" + plane.getEngineType().id().toUpperCase(Locale.ROOT) + ") | [/]配平";
             g.drawString(font, engLine, x + 6, y + 46, HUD_GREEN, false);
+            String ctrlLine = plane.isParkingBrakeOn()
+                    ? "▶ 按 [P] 松驻车 或 按住 [R] 推油门滑跑"
+                    : "[R/Y]加减油门 [W/S]俯仰 [A/D]滚转 [Z/N]偏航";
+            g.drawString(font, ctrlLine, x + 6, y + 60, plane.isParkingBrakeOn() ? HUD_AMBER : HUD_DIM, false);
         } else {
             g.drawString(font, "COLD & DARK 冷舱启动检查单:", x + 6, y + 46, HUD_AMBER, false);
             String stepHint;
@@ -272,7 +276,7 @@ public final class PlaneHudRenderer {
                 stepHint = "▶ 1. 按 [B] 开启主电瓶总开关 (Master Bat)";
             } else if (!plane.isFuelPumpOn()) {
                 stepHint = "▶ 2. 按 [F] 开启燃油增压泵与供油阀";
-            } else if (plane.getMagnetoState() < 3) {
+            } else if (plane.getMagnetoState() == 0) {
                 stepHint = "▶ 3. 按 [G] 将磁电机切至 BOTH";
             } else if (plane.getThrottle() > 0.45f) {
                 stepHint = "▶ 4. 按 [Y/PgDn] 将节流阀收至慢车 (<40%)";

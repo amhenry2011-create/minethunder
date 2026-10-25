@@ -120,6 +120,7 @@ public final class KeyInputHandler {
             }
             case GLFW.GLFW_KEY_I -> {
                 if (mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
+                        && plane.isPilot(mc.player)
                         && !plane.isEngineRunning()) {
                     // 飞机未启动时按住 I 为点火马达，不弹红外模式切换提示
                     break;
@@ -213,7 +214,7 @@ public final class KeyInputHandler {
         }
         if (mc.player != null
                 && mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
-                && plane.getControllingPassenger() == mc.player
+                && plane.isPilot(mc.player)
                 && !plane.isMasterBatteryOn()) {
             RadarHud.radarOn = false;
             notifyClient(mc, Component.literal("请先按 B 开启飞机主电瓶才能给机载雷达供电"));

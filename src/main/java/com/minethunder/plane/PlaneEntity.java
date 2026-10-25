@@ -491,7 +491,7 @@ public class PlaneEntity extends Entity {
     public void applyPilotPacket(Player pilot, float pitchIn, float rollIn, float yawIn,
                                  float throttleDelta, boolean wheelBrakeHold,
                                  boolean starterHold, int actionMask) {
-        if (getControllingPassenger() != pilot) return;
+        if (!isPilot(pilot)) return;
 
         this.inputPitch = Mth.clamp(pitchIn, -1.0f, 1.0f);
         this.inputRoll = Mth.clamp(rollIn, -1.0f, 1.0f);
@@ -501,6 +501,10 @@ public class PlaneEntity extends Entity {
 
         if (Math.abs(throttleDelta) > 1.0E-4f) {
             setThrottle(getThrottle() + throttleDelta);
+            if (throttleDelta > 0.0f && isEngineRunning() && isParkingBrakeOn() && getThrottle() >= 0.20f) {
+                setParkingBrake(false);
+                notifyPilot(pilot, "推油门滑跑：驻车制动 (PARK BRK) 已自动解除");
+            }
         }
 
         // 解码离散开关位
@@ -515,7 +519,12 @@ public class PlaneEntity extends Entity {
             notifyPilot(pilot, "主燃油增压泵与供油阀 (FUEL): " + (next ? "OPEN (已供油)" : "CUTOFF (断油)"));
         }
         if ((actionMask & (1 << 2)) != 0) {
-            int next = (getMagnetoState() + 1) % 4;
+            int next = switch (getMagnetoState()) {
+                case 0 -> 3; // OFF -> BOTH（冷舱启动按一次即可到位）
+                case 3 -> 1; // BOTH -> LEFT
+                case 1 -> 2; // LEFT -> RIGHT
+                default -> 0; // RIGHT -> OFF
+            };
             setMagnetoState(next);
             notifyPilot(pilot, "磁电机/点火电门 (MAG): " + getMagnetoLabel());
         }
@@ -603,7 +612,7 @@ public class PlaneEntity extends Entity {
         }
 
         // 服务端权威物理与发动机状态机
-        if (getControllingPassenger() == null && !autopilotOrbit) {
+        if (getPilot() == null && !autopilotOrbit) {
             this.inputPitch = 0.0f;
             this.inputRoll = 0.0f;
             this.inputYaw = 0.0f;
@@ -611,7 +620,7 @@ public class PlaneEntity extends Entity {
             setStarterHolding(false);
         }
 
-        if (autopilotOrbit && getControllingPassenger() == null) {
+        if (autopilotOrbit && getPilot() == null) {
             updateAutopilotInputs();
         }
 
@@ -654,12 +663,15 @@ public class PlaneEntity extends Entity {
             setEngineRunning(false);
             level().playSound(null, blockPosition(), SoundEvents.FIRE_EXTINGUISH,
                     SoundSource.PLAYERS, 0.9F, 0.8F);
-            if (getControllingPassenger() instanceof Player pilot) {
+            if (getPilot() instanceof Player pilot) {
                 notifyPilot(pilot, !fuel ? "发动机断油停车 (FUEL CUTOFF)" : "磁电机切断停车 (MAG OFF)");
             }
         }
 
         if (!running) {
+            if (isStarterHolding() && !battery && tickCount % 20 == 0 && getPilot() instanceof Player pilot) {
+                notifyPilot(pilot, "无法起动：请先按 [B] 开启机载主电瓶 (MASTER BAT)");
+            }
             if (starter) {
                 // 起动机带动曲轴/高压压气机转子升转
                 float crankTarget = 0.25f;
@@ -667,6 +679,13 @@ public class PlaneEntity extends Entity {
                 if (tickCount % 6 == 0) {
                     level().playSound(null, blockPosition(), SoundEvents.MINECART_RIDING,
                             SoundSource.PLAYERS, 0.5F, 0.65F + rpm * 1.2F);
+                }
+                if (tickCount % 20 == 0 && getPilot() instanceof Player pilot) {
+                    if (!fuel) {
+                        notifyPilot(pilot, "起动机空转：请按 [F] 开启燃油增压泵与供油阀");
+                    } else if (mag == 0) {
+                        notifyPilot(pilot, "起动机空转：请按 [G] 开启磁电机点火电门 (BOTH)");
+                    }
                 }
                 // 满足全部冷舱点火条件且转速达 21% 时成功点火
                 if (rpm >= 0.21f && fuel && mag > 0) {
@@ -679,10 +698,10 @@ public class PlaneEntity extends Entity {
                         egt = Math.max(egt, 420.0f);
                         level().playSound(null, blockPosition(), SoundEvents.BLAZE_SHOOT,
                                 SoundSource.PLAYERS, 1.0F, 1.15F);
-                        if (getControllingPassenger() instanceof Player pilot) {
+                        if (getPilot() instanceof Player pilot) {
                             notifyPilot(pilot, "发动机点火成功 (ENGINE RUNNING - IDLE)");
                         }
-                    } else if (tickCount % 20 == 0 && getControllingPassenger() instanceof Player pilot) {
+                    } else if (tickCount % 20 == 0 && getPilot() instanceof Player pilot) {
                         notifyPilot(pilot, "油门过高导致富油淹缸！请将油门收至 40% 以下再点火");
                     }
                 }
@@ -964,13 +983,13 @@ public class PlaneEntity extends Entity {
         if (gLoad > spec.maxPositiveG() + 1.0f || gLoad < spec.maxNegativeG() - 0.8f) {
             if (tickCount % 20 == 0) {
                 hurt(level().damageSources().generic(), 2.5f);
-                if (getControllingPassenger() instanceof Player pilot) {
+                if (getPilot() instanceof Player pilot) {
                     notifyPilot(pilot, String.format("警告：超过机体结构极限过载 (%.1fG)！", gLoad));
                 }
             }
         }
         if (getFlapStage() == 2 && airspeedMps > 38.0 && tickCount % 40 == 0) {
-            if (getControllingPassenger() instanceof Player pilot) {
+            if (getPilot() instanceof Player pilot) {
                 notifyPilot(pilot, "警告：着陆襟翼超速！请收起襟翼 [U] 或减速");
             }
         }
@@ -1159,11 +1178,28 @@ public class PlaneEntity extends Entity {
         return getPassengers().size() < getPlaneType().maxPassengers();
     }
 
+    /**
+     * 获取前座主驾驶员（第一位乘员）。
+     */
+    @Nullable
+    public LivingEntity getPilot() {
+        Entity first = getFirstPassenger();
+        return first instanceof LivingEntity living ? living : null;
+    }
+
+    public boolean isPilot(@Nullable Entity entity) {
+        return entity != null && entity == getPilot();
+    }
+
     @Nullable
     @Override
     public LivingEntity getControllingPassenger() {
-        Entity first = getFirstPassenger();
-        return first instanceof LivingEntity living ? living : null;
+        // 保持服务端权威气动与位移解算（与 AbstractMinecart 同理）：
+        // 若返回本地玩家，原版 Entity.isControlledByLocalInstance() 在客户端为 true，
+        // 会导致 ClientPacketListener 忽略服务端所有位移同步包，且 LocalPlayer 每 tick 发送
+        // ServerboundMoveVehiclePacket 将服务端飞机强制拉回客户端原地导致无法移动。
+        // 前座飞行员权限统一通过 getPilot() / isPilot() 判定。
+        return null;
     }
 
     @Override
@@ -1199,8 +1235,28 @@ public class PlaneEntity extends Entity {
     }
 
     @Override
+    public double lerpTargetX() {
+        return this.lerpSteps > 0 ? this.lerpX : this.getX();
+    }
+
+    @Override
+    public double lerpTargetY() {
+        return this.lerpSteps > 0 ? this.lerpY : this.getY();
+    }
+
+    @Override
+    public double lerpTargetZ() {
+        return this.lerpSteps > 0 ? this.lerpZ : this.getZ();
+    }
+
+    @Override
     public void lerpMotion(double x, double y, double z) {
         super.lerpMotion(x, y, z);
+    }
+
+    @Override
+    public float maxUpStep() {
+        return 0.6F;
     }
 
     @Override
@@ -1217,6 +1273,12 @@ public class PlaneEntity extends Entity {
     @Override
     public boolean canBeCollidedWith() {
         return true;
+    }
+
+    @Override
+    public boolean canCollideWith(Entity other) {
+        // 仅与其他不可穿透载具实体发生硬碰撞；站在机身/机翼上或周围的玩家与生物不得作为刚体墙阻挡飞机移动
+        return other instanceof PlaneEntity && !this.isPassengerOfSameVehicle(other);
     }
 
     @Override

@@ -120,3 +120,8 @@ gradle.projectsEvaluated {
         }
     }
 }
+
+tasks.register('assembleDebug') {
+    dependsOn tasks.named('assemble')
+}
+

@@ -9,8 +9,12 @@
 1. **SARH 对 BVR 远程目标失锁修复（P0）**：`MissileArrow.datalinkValid()` 与 `updateDatalinkTarget()` 此前将 BVR 分支（`state.targetId() < 0`）限制为仅 `ARH`，导致 `SarhMissileArrow` 在 BVR 锁定时无法更新 `measuredTargetPos` 与 `lastKnownTargetPos`。现已打通 `SARH` 与 `ARH` 共用的 BVR 数据链测量与目标更新。
 2. **`PlaneEntity` 空/地动态分类（P0）**：`RadarCore.classify()` 与 `BvrTrackManager.classify()` 改为按 `plane.isAirborneTarget()` 动态返回 `AIR`（`BvrKind.AI`）或 `GROUND`（`BvrKind.GROUND`），并在 `TargetRegistry`、`RadarHudClientTicker`、`RadarHudRenderer` 中映射 `BvrKind.GROUND -> RadarTargetClass.GROUND`，使停机/滑行飞机在 `GMI` 对地模式下可见，起飞后切入对空 PD/TWS/ACM。
 3. **载机速度计入动态 NEZ 与 BVR 多普勒衰减（P1）**：`RadarHudRenderer.drawLaunchAssessment()` 将 `mc.player.getRootVehicle()` 载机速度叠加至 `vBurn`，高速巡航发射显著延伸面板右侧动态不可逃逸区（NEZ）；`bvrEchoAlpha()` 改用 `getRootVehicle().getDeltaMovement()` 计算真实相对径向速度。
-4. **多座飞机（Large / Cargo Plane）前后座权限分离与防自锁（P1）**：`PlaneClientInput`、`KeyInputHandler.toggleRadar` 与 `PlaneHudRenderer` 仅对前座主驾（`plane.getControllingPassenger() == mc.player`）绑定飞行操纵、冷舱电瓶锁死与主屏平显；后座乘员（WSO/乘客）可独立开关雷达与导引头；`TrackedTarget.isOwnedBy()` 新增 `player.getRootVehicle().getUUID()` 排除。
+4. **多座飞机（Large / Cargo Plane）前后座权限分离与防自锁（P1）**：`PlaneClientInput`、`KeyInputHandler.toggleRadar` 与 `PlaneHudRenderer` 仅对前座主驾（`plane.isPilot(mc.player)`）绑定飞行操纵、冷舱电瓶锁死与主屏平显；后座乘员（WSO/乘客）可独立开关雷达与导引头；`TrackedTarget.isOwnedBy()` 新增 `player.getRootVehicle().getUUID()` 排除。
 5. **`Ctrl + Alt` 防误触与旧弓箭路径对齐（P1）**：`KeyInputHandler` 新增 `hasOtherActionKeyDown()` 排除同时按下其他雷达/武器功能键时的误发射；`MissileEvents.onArrowLoose` 对齐 BVR 远程目标、最大离轴角、`isOccludedForTarget` 及取消原因提示；新增 `ServerStoppedEvent` 清理 `ServerRadarState.clearAll()` 与 `RwrPaintPacket` 负数 ID 校验。
+6. **玩家位于飞机上时飞机无法移动修复（P0）**：
+   - **骑乘死锁修复**：`PlaneEntity.getControllingPassenger()` 此前返回第一位乘员（`Player`），导致客户端 `Entity.isControlledByLocalInstance() == true`（`ClientPacketListener` 忽略服务端所有 `ClientboundMoveEntityPacket`/`ClientboundTeleportEntityPacket` 位移包），而 `PlaneEntity.tick()` 在客户端又不执行物理移动，且 `LocalPlayer` 每 tick 发送 `ServerboundMoveVehiclePacket` 将服务端飞机坐标强行拉回客户端原地。现将 `getControllingPassenger()` 改为返回 `null`（保持服务端权威运动同步），新增 `getPilot()` / `isPilot()` 专职前座主驾判定，并补齐 1.21.1 `lerpTargetX/Y/Z()` 与 `maxUpStep(0.6F)`。
+   - **站立碰撞阻挡修复**：重写 `PlaneEntity.canCollideWith(Entity)` 仅对其他 `PlaneEntity` 发生硬碰撞，杜绝玩家或生物站在机身/机翼上时被 `Entity.collide` 当作不可穿透刚体墙阻挡飞机移动。
+   - **起飞滑跑体验优化**：发动机运转时推油门（`[R]` ≥ 20%）自动解除驻车制动（`PARK BRK`）；磁电机 `[G]` 从 `OFF` 按一次即切至 `BOTH`。
 
 ## 2026-10-23 六轮：面板铺满、导引头环分段、导弹飞行与 BVR 修复
 
