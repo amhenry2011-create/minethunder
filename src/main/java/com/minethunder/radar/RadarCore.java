@@ -173,8 +173,8 @@ public final class RadarCore {
 
     /** 目标分类：固定翼飞机、船、地面活体、空中活体；其他实体不进入雷达目标列表。 */
     public static RadarTargetClass classify(Entity entity) {
-        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
-            return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
+        if (entity instanceof com.minethunder.plane.PlaneEntity) {
+            return RadarTargetClass.AIR;
         }
         if (entity instanceof Marker marker) {
             return RadarBlockTargets.targetClass(marker);
@@ -191,8 +191,8 @@ public final class RadarCore {
         }
         if (!(entity instanceof LivingEntity living) || !living.isAlive()) return null;
         if (living.isPassenger() && living.getVehicle() instanceof Boat) return null;
-        if (living.isPassenger() && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane) {
-            return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
+        if (living.isPassenger() && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity) {
+            return null;
         }
         // 水面/水下活体仍作为空中模式可见目标，避免落水后完全隐身。
         if (living.isInWater()) return RadarTargetClass.AIR;

@@ -1,6 +1,8 @@
 {
   "parent": "minecraft:item/generated",
   "textures": {
-    "layer0": "minecraft:item/spruce_boat"
+    "layer0": "minethunder:item/large_plane",
+    "layer1": "minethunder:item/large_plane_overlay"
   }
 }
+

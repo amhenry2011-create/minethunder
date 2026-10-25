@@ -125,8 +125,8 @@ public final class BvrTrackManager {
     }
 
     private static BvrKind classify(Entity entity) {
-        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
-            return plane.isAirborneTarget() ? BvrKind.AI : BvrKind.SURFACE;
+        if (entity instanceof com.minethunder.plane.PlaneEntity) {
+            return BvrKind.AI;
         }
         // 飞行生物直接按空中目标处理，避免低空悬停时支撑扫描误判为地面。
         if (entity instanceof FlyingMob

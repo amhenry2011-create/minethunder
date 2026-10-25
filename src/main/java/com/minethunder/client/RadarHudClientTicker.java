@@ -154,12 +154,6 @@ public final class RadarHudClientTicker {
             startGuidanceLine();
         }
 
-        if (player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
-                && !plane.isMasterBatteryOn() && RadarHud.radarOn) {
-            RadarHud.radarOn = false;
-            lockMessage("电瓶未开启 (B)：机载雷达断电");
-        }
-
         if (!RadarHud.radarOn) {
             RadarHud.contacts.clear();
             RadarHud.contactPaintTicks.clear();

@@ -17,6 +17,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.monster.Phantom;
@@ -222,17 +223,29 @@ public final class SensorDebugCommand {
         }
         ServerLevel level = player.serverLevel();
         Vec3 look = player.getLookAngle().normalize();
-        Vec3 pos = player.getEyePosition().add(look.scale(80.0)).add(0, 12.0, 0);
+        Vec3 horizLook = new Vec3(look.x, 0.0, look.z);
+        if (horizLook.lengthSqr() < 1.0E-4) {
+            horizLook = Vec3.directionFromRotation(0.0f, player.getYRot());
+        } else {
+            horizLook = horizLook.normalize();
+        }
+        double radius = 55.0;
+        Vec3 orbitCenter = player.getEyePosition().add(0.0, 4.0, 0.0);
+        Vec3 pos = orbitCenter.add(horizLook.scale(radius));
         com.minethunder.plane.PlaneEntity plane = new com.minethunder.plane.PlaneEntity(
                 com.minethunder.Registration.LARGE_PLANE.get(), level,
                 com.minethunder.plane.PlaneTypeSpec.LARGE_PLANE);
-        plane.moveTo(pos.x, pos.y, pos.z, player.getYRot() + 90.0f, 0.0f);
+        float tangentYaw = Mth.wrapDegrees(player.getYRot() - 90.0f);
+        plane.moveTo(pos.x, pos.y, pos.z, tangentYaw, 0.0f);
+        plane.setYawDeg(tangentYaw);
         plane.configureRunningForTest(
                 com.minethunder.plane.PlaneEngineType.JET,
                 afterburner ? 1.10f : 0.78f,
-                afterburner);
-        Vec3 heading = Vec3.directionFromRotation(0.0f, player.getYRot() + 90.0f).normalize();
-        plane.setDeltaMovement(heading.scale(afterburner ? 1.45 : 0.95));
+                afterburner,
+                orbitCenter,
+                radius);
+        Vec3 heading = Vec3.directionFromRotation(0.0f, tangentYaw).normalize();
+        plane.setDeltaMovement(heading.scale(afterburner ? 1.45 : 1.05));
         plane.setCustomName(net.minecraft.network.chat.Component.literal(
                 afterburner ? "BOGEY-JET-AB" : "BOGEY-JET"));
         plane.setCustomNameVisible(true);
@@ -241,7 +254,7 @@ public final class SensorDebugCommand {
         level.addFreshEntity(plane);
         com.minethunder.radar.BvrTicketService.registerManualTarget(plane);
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
-                "已在前方 80 格生成喷气靶机 " + (afterburner ? "BOGEY-JET-AB (开启加力 WEP)" : "BOGEY-JET (巡航推力)")), false);
+                "已在正前方 55 格生成环绕靶机 " + (afterburner ? "BOGEY-JET-AB (开启加力 WEP)" : "BOGEY-JET (巡航推力)")), false);
         return 1;
     }
 

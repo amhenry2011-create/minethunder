@@ -85,6 +85,12 @@ public class PlaneEntity extends Entity {
             SynchedEntityData.defineId(PlaneEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Float> DATA_HEALTH =
             SynchedEntityData.defineId(PlaneEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<Float> DATA_VEL_X =
+            SynchedEntityData.defineId(PlaneEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<Float> DATA_VEL_Y =
+            SynchedEntityData.defineId(PlaneEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<Float> DATA_VEL_Z =
+            SynchedEntityData.defineId(PlaneEntity.class, EntityDataSerializers.FLOAT);
 
     // 渲染平滑插值与舵面偏角
     public float prevPitchDeg = 0.0f;
@@ -154,6 +160,17 @@ public class PlaneEntity extends Entity {
         builder.define(DATA_G_LOAD, 1.0f);
         builder.define(DATA_STALLING, false);
         builder.define(DATA_HEALTH, 80.0f);
+        builder.define(DATA_VEL_X, 0.0f);
+        builder.define(DATA_VEL_Y, 0.0f);
+        builder.define(DATA_VEL_Z, 0.0f);
+    }
+
+    @Override
+    public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
+        super.onSyncedDataUpdated(key);
+        if (DATA_PLANE_TYPE.equals(key)) {
+            this.refreshDimensions();
+        }
     }
 
     public PlaneTypeSpec getPlaneType() {
@@ -439,8 +456,13 @@ public class PlaneEntity extends Entity {
      * 配置为指定发动机与推力档位的自动盘旋测试靶机（供 /minethunder test plane 调用）。
      */
     public void configureRunningForTest(PlaneEngineType engineType, float throttle, boolean afterburner) {
+        configureRunningForTest(engineType, throttle, afterburner, position(), 60.0);
+    }
+
+    public void configureRunningForTest(PlaneEngineType engineType, float throttle,
+                                        boolean afterburner, Vec3 center, double radius) {
         setEngineType(engineType);
-        enableAutopilotOrbit(position(), 95.0, getY(), afterburner ? 36.0 : 24.0);
+        enableAutopilotOrbit(center, radius, getY(), afterburner ? 36.0 : 24.0);
         setThrottle(afterburner ? 1.10f : throttle);
         if (afterburner) {
             this.entityData.set(DATA_RPM, 1.08f);
@@ -561,6 +583,14 @@ public class PlaneEntity extends Entity {
         }
 
         if (level().isClientSide) {
+            this.xRotO = this.prevPitchDeg;
+            this.yRotO = this.prevYawDeg;
+            this.setXRot(getPitchDeg());
+            this.setYRot(getYawDeg());
+            setDeltaMovement(
+                    this.entityData.get(DATA_VEL_X),
+                    this.entityData.get(DATA_VEL_Y),
+                    this.entityData.get(DATA_VEL_Z));
             if (lerpSteps > 0) {
                 double nx = getX() + (lerpX - getX()) / lerpSteps;
                 double ny = getY() + (lerpY - getY()) / lerpSteps;
@@ -859,7 +889,8 @@ public class PlaneEntity extends Entity {
         // 7. 地面滑跑、驻车制动与机轮摩擦
         if (onGround()) {
             if (newVelMps.y < 0.0) {
-                newVelMps = new Vec3(newVelMps.x, 0.0, newVelMps.z);
+                // 保留微弱下压分量使 Entity.move 持续判定 verticalCollision && movement.y < 0，避免 onGround 奇偶帧抖动
+                newVelMps = new Vec3(newVelMps.x, -0.15, newVelMps.z);
             }
             // 将水平速度约束向机头方向（机轮侧向防滑）
             Vec3 horizForward = new Vec3(basis.forward.x, 0.0, basis.forward.z);
@@ -908,9 +939,13 @@ public class PlaneEntity extends Entity {
         checkStructuralLimits(airspeed, getGLoad());
 
         // 转换回 blocks/tick 并执行碰撞移动
-        Vec3 prevPos = position();
-        setDeltaMovement(newVelMps.scale(1.0 / 20.0));
+        Vec3 stepVel = newVelMps.scale(1.0 / 20.0);
+        setDeltaMovement(stepVel);
         move(MoverType.SELF, getDeltaMovement());
+        Vec3 finalVel = getDeltaMovement();
+        this.entityData.set(DATA_VEL_X, (float) finalVel.x);
+        this.entityData.set(DATA_VEL_Y, (float) (onGround() && finalVel.y < 0.0 ? 0.0 : finalVel.y));
+        this.entityData.set(DATA_VEL_Z, (float) finalVel.z);
 
         // 9. 高速撞墙/硬着陆冲击检测
         if (horizontalCollision && airspeed > 18.0) {
@@ -1161,6 +1196,11 @@ public class PlaneEntity extends Entity {
         this.lerpY = y;
         this.lerpZ = z;
         this.lerpSteps = steps;
+    }
+
+    @Override
+    public void lerpMotion(double x, double y, double z) {
+        super.lerpMotion(x, y, z);
     }
 
     @Override

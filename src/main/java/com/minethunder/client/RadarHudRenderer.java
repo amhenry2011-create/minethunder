@@ -255,7 +255,8 @@ public final class RadarHudRenderer {
         if (bvrRight.lengthSqr() < 1.0E-6) bvrRight = new Vec3(1, 0, 0);
         bvrRight = bvrRight.normalize();
         for (BvrTrack track : BvrState.active()) {
-            if (mc.player.getUUID().equals(track.uuid())) continue;
+            if (mc.player.getUUID().equals(track.uuid())
+                    || mc.player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             if (track.kind() == BvrKind.MISSILE
                     && mc.player.getUUID().equals(track.ownerUuid())) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
@@ -366,7 +367,8 @@ public final class RadarHudRenderer {
         if (bvrRight.lengthSqr() < 1.0E-6) bvrRight = new Vec3(1, 0, 0);
         bvrRight = bvrRight.normalize();
         for (BvrTrack track : BvrState.active()) {
-            if (mc.player.getUUID().equals(track.uuid())) continue;
+            if (mc.player.getUUID().equals(track.uuid())
+                    || mc.player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             if (track.kind() != BvrKind.PLAYER && track.kind() != BvrKind.AI) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
             if (localEchoVisible(mc, bvrShadow, nowTick, true)) continue;
