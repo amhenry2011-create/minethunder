@@ -45,6 +45,10 @@ public final class TwsTrackManager {
                 track.lastUpdateTick = tick;
             }
             track.confirmed = track.hits >= 2;
+            Entity entity = entity(track.entityId);
+            boolean notching = echo.inDopplerNotch && echo.notchSeverity > 0.4
+                    && !RadarCore.isChaff(entity);
+            track.notchTicks = notching ? track.notchTicks + 1 : 0;
         }
 
         TRACKS.entrySet().removeIf(e -> {
@@ -52,6 +56,7 @@ public final class TwsTrackManager {
             RadarEcho echo = RadarHud.echoes.get(e.getValue().uuid);
             return entity == null || !entity.isAlive()
                     || echo == null || echo.expired(tick)
+                    || e.getValue().notchTicks >= 20
                     || RadarCore.classify(entity) != RadarTargetClass.AIR;
         });
         while (TRACKS.size() > MAX_TRACKS) {

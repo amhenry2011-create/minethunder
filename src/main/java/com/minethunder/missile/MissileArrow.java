@@ -55,6 +55,8 @@ public abstract class MissileArrow extends AbstractArrow {
     protected boolean detonating = false;
     /** 测试弹不造成伤害，并允许测试弹之间互相拦截。 */
     protected boolean testMissile = false;
+    /** 测试制导：绕过载机数据链/照射，直接按测试目标制导。 */
+    protected boolean testGuided = false;
     /** 中段数据链/IOG 最后航迹。 */
     @Nullable protected Vec3 lastKnownTargetPos;
     protected Vec3 lastKnownTargetVelocity = Vec3.ZERO;
@@ -108,6 +110,14 @@ public abstract class MissileArrow extends AbstractArrow {
         return testMissile;
     }
 
+    public boolean isTestGuided() {
+        return testGuided;
+    }
+
+    public void setTestGuided(boolean testGuided) {
+        this.testGuided = testGuided;
+    }
+
     public void setTestMissile(boolean testMissile) {
         this.testMissile = testMissile;
         this.lastPos = position();
@@ -121,6 +131,7 @@ public abstract class MissileArrow extends AbstractArrow {
 
     /** 当前导弹是否有可用的载机雷达数据链（硬锁定、TWS 跟踪或 BVR 远程软锁）。 */
     protected boolean datalinkValid() {
+        if (testGuided) return true;
         if (spec.guidance == MissileSpec.Guidance.IR) return false;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return false;
         if (spec.guidance == MissileSpec.Guidance.SARH) return datalinkValidLocal();
@@ -252,6 +263,7 @@ public abstract class MissileArrow extends AbstractArrow {
         tag.putDouble("MTDistanceFlown", distanceFlown);
         tag.putBoolean("MTPitbull", pitbullActive);
         tag.putBoolean("MTTest", testMissile);
+        tag.putBoolean("MTTestGuided", testGuided);
         tag.putInt("MTDatalinkCooldown", datalinkUpdateCooldown);
         tag.putFloat("MTTrackQuality", trackQuality);
         tag.putInt("MTMeasuredTick", measuredTargetTick);
@@ -280,6 +292,7 @@ public abstract class MissileArrow extends AbstractArrow {
         distanceFlown = tag.getDouble("MTDistanceFlown");
         pitbullActive = tag.getBoolean("MTPitbull");
         testMissile = tag.getBoolean("MTTest");
+        testGuided = tag.getBoolean("MTTestGuided");
         datalinkUpdateCooldown = tag.getInt("MTDatalinkCooldown");
         trackQuality = tag.getFloat("MTTrackQuality");
         measuredTargetTick = tag.getInt("MTMeasuredTick");
@@ -713,6 +726,7 @@ public abstract class MissileArrow extends AbstractArrow {
     /** 中段数据链更新：载机锁定/TWS/BVR 目标变化时切换导弹目标。 */
     protected void updateDatalinkTarget() {
         if (level().isClientSide || spec.guidance == MissileSpec.Guidance.IR) return;
+        if (testGuided) return;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) return;
         if (!(getOwner() instanceof ServerPlayer player)) return;
         ServerRadarState.LockState state = ServerRadarState.get(player);
@@ -740,6 +754,13 @@ public abstract class MissileArrow extends AbstractArrow {
     /** 生成带延迟/噪声/丢帧的数据链测量；IR 和 ARH 末段直接使用导引头测量。 */
     protected void updateDatalinkMeasurement(@Nullable Entity target) {
         if (level().isClientSide || target == null || !target.isAlive()) return;
+
+        if (testGuided) {
+            trackQuality = 1.0f;
+            recordMeasurement(target.getBoundingBox().getCenter(),
+                    target.getDeltaMovement().scale(20.0));
+            return;
+        }
 
         if (spec.guidance == MissileSpec.Guidance.IR
                 || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive)) {
@@ -794,7 +815,8 @@ public abstract class MissileArrow extends AbstractArrow {
     /** 记录目标最后已知位置；数据链失效后按 IOG 继续飞行。 */
     protected void updateTargetTrack(@Nullable Entity target) {
         if (target == null || !target.isAlive()) return;
-        boolean canTrack = spec.guidance == MissileSpec.Guidance.IR
+        boolean canTrack = testGuided
+                || spec.guidance == MissileSpec.Guidance.IR
                 || datalinkValid()
                 || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive);
         if (!canTrack) return;
@@ -805,9 +827,10 @@ public abstract class MissileArrow extends AbstractArrow {
 
     @Nullable
     protected Vec3 guidancePosition(@Nullable Entity target) {
-        // 导引头直接测量：IR 全程、ARH 末段。
+        // 导引头直接测量：IR 全程、ARH 末段、测试制导全程。
         if (target != null && target.isAlive()
-                && (spec.guidance == MissileSpec.Guidance.IR
+                && (testGuided
+                || spec.guidance == MissileSpec.Guidance.IR
                 || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive))) {
             return target.getBoundingBox().getCenter();
         }
@@ -830,7 +853,8 @@ public abstract class MissileArrow extends AbstractArrow {
 
     protected Vec3 guidanceVelocity(@Nullable Entity target) {
         if (target != null && target.isAlive()
-                && (spec.guidance == MissileSpec.Guidance.IR
+                && (testGuided
+                || spec.guidance == MissileSpec.Guidance.IR
                 || (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive))) {
             return target.getDeltaMovement().scale(20.0);
         }
@@ -922,26 +946,58 @@ public abstract class MissileArrow extends AbstractArrow {
                     living.hurt(level().damageSources().explosion(this, getOwner()),
                             EXPLOSION_DAMAGE);
                 }
-                level().explode(this,
-                        level().damageSources().explosion(this, getOwner()),
-                        new net.minecraft.world.level.ExplosionDamageCalculator() {
-                            @Override
-                            public boolean shouldDamageEntity(
-                                    net.minecraft.world.level.Explosion explosion,
-                                    Entity entity) {
-                                return false;
-                            }
-                        },
-                        getX(), getY(), getZ(), EXPLOSION_RADIUS, false,
-                        Level.ExplosionInteraction.NONE);
+                applySplashDamage(target);
             }
+            level().explode(this,
+                    level().damageSources().explosion(this, getOwner()),
+                    new net.minecraft.world.level.ExplosionDamageCalculator() {
+                        @Override
+                        public boolean shouldDamageEntity(
+                                net.minecraft.world.level.Explosion explosion,
+                                Entity entity) {
+                            return false;
+                        }
+                    },
+                    getX(), getY(), getZ(), EXPLOSION_RADIUS, false,
+                    Level.ExplosionInteraction.NONE);
             if (level() instanceof ServerLevel serverLevel) {
                 serverLevel.sendParticles(ParticleTypes.FIREWORK,
-                        getX(), getY(), getZ(), 18, 1.2, 1.2, 1.2, 0.08);
+                        getX(), getY(), getZ(), 24, 1.8, 1.8, 1.8, 0.08);
             }
-            destroyFragileBlocks();
+            if (!testMissile) destroyFragileBlocks();
         }
         discard();
+    }
+
+    /**
+     * 6 b 内溅射：中心 8 点、边缘衰减到 0，距离越近越高；
+     * 不重复伤害直接命中目标，不伤发射者/同队，墙体遮挡不计。
+     */
+    private void applySplashDamage(@Nullable Entity directTarget) {
+        Vec3 center = position();
+        Entity owner = getOwner();
+        for (LivingEntity living : level().getEntitiesOfClass(LivingEntity.class,
+                new net.minecraft.world.phys.AABB(center, center).inflate(EXPLOSION_RADIUS))) {
+            if (living == directTarget || living == owner || !living.isAlive()) continue;
+            if (owner != null && living.isAlliedTo(owner)) continue;
+            Vec3 targetCenter = living.getBoundingBox().getCenter();
+            double distance = center.distanceTo(targetCenter);
+            if (distance > EXPLOSION_RADIUS) continue;
+            if (splashBlocked(center, targetCenter)) continue;
+            float damage = (float) (SPLASH_DAMAGE
+                    * (1.0 - distance / EXPLOSION_RADIUS));
+            if (damage <= 0.05F) continue;
+            living.hurt(level().damageSources().explosion(this, owner), damage);
+        }
+    }
+
+    private boolean splashBlocked(Vec3 from, Vec3 to) {
+        if (!level().getBlockState(BlockPos.containing(from)).isAir()) return false;
+        var hit = level().clip(new net.minecraft.world.level.ClipContext(
+                from, to, net.minecraft.world.level.ClipContext.Block.COLLIDER,
+                net.minecraft.world.level.ClipContext.Fluid.NONE,
+                net.minecraft.world.phys.shapes.CollisionContext.empty()));
+        return hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS;
     }
 
     /** TNT 风格爆炸只破坏极脆弱方块，不破坏普通地形。 */
@@ -958,10 +1014,12 @@ public abstract class MissileArrow extends AbstractArrow {
         }
     }
 
-    /** 爆炸伤害 */
+    /** 直接命中伤害 */
     private static final float EXPLOSION_DAMAGE = 25.0F;
-    /** 爆炸半径 */
-    private static final float EXPLOSION_RADIUS = 1.5F;
+    /** 溅射最大伤害（中心） */
+    private static final float SPLASH_DAMAGE = 8.0F;
+    /** 爆炸/溅射半径 */
+    private static final float EXPLOSION_RADIUS = 6.0F;
 
     /** 低于该速度（m/s）视为抛锚/悬停异常。 */
     private static final double STALL_SPEED_MPS = 15.0;

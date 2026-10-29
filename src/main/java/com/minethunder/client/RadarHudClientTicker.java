@@ -837,9 +837,21 @@ public final class RadarHudClientTicker {
                 ? RadarCore.classify(target) : tracked.targetClass;
         boolean occluded = target != null && targetClass != null
                 && RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass);
+        boolean notching;
+        if (target != null) {
+            notching = !RadarCore.hasValidDoppler(player, target);
+        } else {
+            Vec3 relativeVelocity = tracked.velocity().scale(20.0)
+                    .subtract(player.getDeltaMovement().scale(20.0));
+            double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
+                    : relativeVelocity.dot(to.normalize());
+            notching = range > RadarCore.NOTCH_BURN_THROUGH_RANGE
+                    && Math.abs(radialVelocity) < RadarCore.DOPPLER_NOTCH_THRESHOLD;
+        }
         boolean valid = range > 0.1
                 && range <= RadarHud.effectiveRange()
                 && !occluded
+                && !notching
                 && Math.abs(azimuth) <= RadarHud.effectiveScanHalfDeg()
                 && Math.abs(elevation) <= RadarHud.effectiveScanElevationHalfDeg();
 
@@ -858,8 +870,8 @@ public final class RadarHudClientTicker {
                         .subtract(player.getDeltaMovement()).scale(20.0);
                 double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                         : relativeVelocity.dot(to.normalize());
-                double notchSeverity = RadarCore.notchSeverity(
-                        radialVelocity, range, RadarHud.currentMode);
+                double notchSeverity = RadarCore.isChaff(target) ? 0.0
+                        : RadarCore.notchSeverity(radialVelocity, range, RadarHud.currentMode);
                 RadarContact contact = new RadarContact(target, range, azimuth, elevation,
                         radialVelocity, targetPos, false, notchSeverity > 0.4,
                         notchSeverity, targetClass);

@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class RwrManager {
     private RwrManager() {}
 
-    public static final double RANGE = 600.0;
+    public static final double RANGE = 1000.0;
     /** 以本机水平面为基准的垂直盲区半角；天顶/天底各 30°。 */
     public static final double VERTICAL_BLIND_DEG = 60.0;
     private static final int UPDATE_TICKS = 2;

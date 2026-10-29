@@ -20,8 +20,6 @@ public class SarhMissileArrow extends MissileArrow {
     private java.util.UUID shooterId;
     /** 连续失锁 tick，超过 prolongationTimeMax 后自爆 */
     private int lostLockTicks;
-    /** 测试弹可绕过真实载机照射，直接追测试目标。 */
-    private boolean testGuided;
     /** 本 tick 是否仍有有效的载机照射。 */
     private boolean illuminated;
 
@@ -33,16 +31,11 @@ public class SarhMissileArrow extends MissileArrow {
         this.shooterId = shooter.getUUID();
     }
 
-    public void setTestGuided(boolean testGuided) {
-        this.testGuided = testGuided;
-    }
-
     @Override
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
         if (shooterId != null) tag.putString("MTShooter", shooterId.toString());
         tag.putInt("MTLostLockTicks", lostLockTicks);
-        tag.putBoolean("MTTestGuided", testGuided);
     }
 
     @Override
@@ -51,13 +44,12 @@ public class SarhMissileArrow extends MissileArrow {
         shooterId = tag.contains("MTShooter")
                 ? parseUuid(tag.getString("MTShooter")) : null;
         lostLockTicks = tag.getInt("MTLostLockTicks");
-        testGuided = tag.getBoolean("MTTestGuided");
         illuminated = false;
     }
 
     @Override
     protected Entity resolveTarget() {
-        if (testGuided && testMissile) {
+        if (testGuided) {
             Entity testTarget = getTarget();
             if (testTarget != null && testTarget.isAlive()) {
                 lostLockTicks = 0;
@@ -85,6 +77,7 @@ public class SarhMissileArrow extends MissileArrow {
         boolean nowIlluminated = (trackIllumination || bvrIllumination)
                 && shooter.level() == target.level()
                 && shooter.distanceTo(target) <= spec.maxDistance
+                && RadarCore.hasValidDoppler(shooter, target)
                 && !RadarCore.isOccludedForTarget(shooter.level(), eye, targetPos,
                         RadarCore.classify(target));
         this.illuminated = nowIlluminated;
@@ -113,7 +106,7 @@ public class SarhMissileArrow extends MissileArrow {
 
     @Override
     protected boolean datalinkValid() {
-        if (testGuided && testMissile) return true;
+        if (testGuided) return true;
         return illuminated && super.datalinkValid();
     }
 }

@@ -1,5 +1,7 @@
 package com.minethunder.radar;
 
+import com.minethunder.countermeasure.Countermeasure;
+import com.minethunder.countermeasure.CountermeasureEntity;
 import com.minethunder.missile.MissileArrow;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Marker;
@@ -126,13 +128,34 @@ public final class RadarCore {
                 continue;
             }
 
-            double notchSeverity = notchSeverity(radialVel, dist, mode);
+            double notchSeverity = isChaff(e) ? 0.0 : notchSeverity(radialVel, dist, mode);
             boolean notch = notchSeverity > 0.4;
 
             contacts.add(new RadarContact(e, dist, Math.toDegrees(az), Math.toDegrees(el),
                     radialVel, pos, occluded, notch, notchSeverity, targetClass));
         }
         return contacts;
+    }
+
+    /** 箔条是雷达假目标，不参与目标 Notch 隐藏。 */
+    public static boolean isChaff(Entity entity) {
+        return entity instanceof CountermeasureEntity countermeasure
+                && countermeasure.type() == Countermeasure.CHAFF;
+    }
+
+    /**
+     * 目标当前是否有有效多普勒：50 b 内烧穿，或相对径向速度达到阈值。
+     * 箔条作为雷达假目标始终有效。
+     */
+    public static boolean hasValidDoppler(Entity observer, Entity target) {
+        if (isChaff(target)) return true;
+        Vec3 to = target.getBoundingBox().getCenter().subtract(observer.getEyePosition());
+        double range = to.length();
+        if (range <= 0.1) return true;
+        if (range <= NOTCH_BURN_THROUGH_RANGE) return true;
+        Vec3 relativeVelocity = target.getDeltaMovement()
+                .subtract(observer.getDeltaMovement()).scale(20.0);
+        return Math.abs(relativeVelocity.dot(to.normalize())) >= DOPPLER_NOTCH_THRESHOLD;
     }
 
     /** 计算 0..1 的 Notch 严重度；径向速度必须使用 m/s。 */
@@ -171,6 +194,10 @@ public final class RadarCore {
         }
         if (entity instanceof MissileArrow) {
             return RadarTargetClass.AIR;
+        }
+        if (entity instanceof CountermeasureEntity countermeasure) {
+            // 箔条是雷达假目标；热焰弹只对红外导引头可见，不进入雷达。
+            return countermeasure.type() == Countermeasure.CHAFF ? RadarTargetClass.AIR : null;
         }
         // 投射物（雪球/蛋/箭/火球等）作为空中目标，便于雷达锁定与导引头测试。
         if (entity instanceof Projectile) {

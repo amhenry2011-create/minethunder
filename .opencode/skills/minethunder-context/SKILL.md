@@ -57,7 +57,7 @@ description: Use for EVERY MineThunder task in /Users/henry/code/minethunder, in
 
 - TWS: multiple echoes retained, only one current tracked/hard-lockable target; `Alt+T` switches current; `Alt+Q`/`Alt+D` adjust TWS/global range/scan; wide ±60 scan allows ±30 center shift.
 - ACM: independent range, default 100 b; `Alt+Q` adjusts range; `Alt+D` is disabled and width stays ±3°; scan position fixed.
-- Notch: realistic degradation via `RadarCore`: threshold 5 m/s, burn-through 0–50 b, mode sensitivity SRC 0 / MTI 0.7 / ACM 0.85 / PD/TWS/STT 1.0. No hard invisibility; no hard server rejection.
+- Notch: realistic degradation via `RadarCore`: threshold 5 m/s, burn-through 0–50 b, mode sensitivity SRC 0 / MTI 0.7 / ACM 0.85 / PD/TWS/STT 1.0. No hard invisibility; seeker progress decays after sustained notch. ARH/SARH launches are rejected server-side without valid Doppler (chaff exempt).
 - Lock flow: `Alt+F` starts a fixed 4-corner acquisition at the approximate scanned position (20 ticks), then switches actual `RadarMode.STT` (`TRK PD`); panel target becomes bright green dot; main screen green square + speed data; unlock/drop restores previous search mode.
 - Automatic lock frames are removed except TWS current marking and ACM auto-intercept. ACM auto goes directly to TRK PD.
 - Track loss: dim over 100 ticks (5s), inertial tracking, reacquire restores; >5s drops lock.

@@ -15,11 +15,14 @@ import com.minethunder.radar.RwrThreat;
 import com.minethunder.sensor.SensorDebugState;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.monster.Phantom;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -79,7 +82,31 @@ public final class SensorDebugCommand {
                                 .then(Commands.literal("clear")
                                         .executes(context -> clearBvrTargets(context.getSource())))
                                 .then(Commands.literal("status")
-                                        .executes(context -> bvrStatus(context.getSource()))))
+                                        .executes(context -> bvrStatus(context.getSource())))
+                                .then(Commands.literal("incoming")
+                                        .executes(context -> spawnBvrIncoming(context.getSource(),
+                                                MissileSpec.Guidance.ARH, null))
+                                        .then(Commands.literal("arh")
+                                                .executes(context -> spawnBvrIncoming(context.getSource(),
+                                                        MissileSpec.Guidance.ARH, null))
+                                                .then(Commands.argument("target", EntityArgument.player())
+                                                        .executes(context -> spawnBvrIncoming(
+                                                                context.getSource(),
+                                                                MissileSpec.Guidance.ARH,
+                                                                EntityArgument.getPlayer(context, "target")))))
+                                        .then(Commands.literal("sarh")
+                                                .executes(context -> spawnBvrIncoming(context.getSource(),
+                                                        MissileSpec.Guidance.SARH, null))
+                                                .then(Commands.argument("target", EntityArgument.player())
+                                                        .executes(context -> spawnBvrIncoming(
+                                                                context.getSource(),
+                                                                MissileSpec.Guidance.SARH,
+                                                                EntityArgument.getPlayer(context, "target"))))))
+                                .then(Commands.literal("strike")
+                                        .executes(context -> spawnBvrStrike(context.getSource(), null))
+                                        .then(Commands.argument("target", EntityArgument.player())
+                                                .executes(context -> spawnBvrStrike(context.getSource(),
+                                                        EntityArgument.getPlayer(context, "target"))))))
                         .then(Commands.literal("dodge")
                                 .requires(source -> source.hasPermission(2))
                                 .executes(context -> FullFeatureTest.dodge(context.getSource(), null))
@@ -245,6 +272,78 @@ public final class SensorDebugCommand {
         return 1;
     }
 
+    /**
+     * 800 格外来袭测试：默认目标是执行命令的玩家，沿目标视线前方生成，
+     * 测试弹无伤害；ARH/SARH 都使用 testGuided 绕过载机数据链和照射。
+     */
+    private static int spawnBvrIncoming(CommandSourceStack source,
+                                        MissileSpec.Guidance guidance,
+                                        @Nullable ServerPlayer targetArg) {
+        if (!(source.getEntity() instanceof ServerPlayer shooter)) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                    "只有玩家可以执行 BVR 来袭测试"));
+            return 0;
+        }
+        ServerPlayer target = targetArg == null ? shooter : targetArg;
+        MissileSpec spec = guidance == MissileSpec.Guidance.SARH
+                ? MissileSpecs.SARH : MissileSpecs.ARH;
+        Vec3 spawn = bvrSpawnPoint(target, 800.0);
+        Vec3 motion = target.getEyePosition().subtract(spawn).normalize().scale(1.0);
+        MissileArrow missile = createMissile(target.serverLevel(), spec,
+                spawn, motion, target);
+        if (missile == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("无法生成 BVR 测试弹"));
+            return 0;
+        }
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已生成 800 格外无伤害 " + spec.name + " 来袭测试，目标："
+                        + target.getName().getString()), false);
+        return 1;
+    }
+
+    /** 800 格实弹 ARH 打击测试；默认打自己，生成时带区块加载并保持制导。 */
+    private static int spawnBvrStrike(CommandSourceStack source,
+                                      @Nullable ServerPlayer targetArg) {
+        if (!(source.getEntity() instanceof ServerPlayer shooter)) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                    "只有玩家可以执行 BVR 实弹测试"));
+            return 0;
+        }
+        ServerPlayer target = targetArg == null ? shooter : targetArg;
+        Vec3 spawn = bvrSpawnPoint(target, 800.0);
+        Vec3 motion = target.getEyePosition().subtract(spawn).normalize().scale(1.0);
+        MissileArrow missile = createMissile(target.serverLevel(), MissileSpecs.ARH,
+                spawn, motion, target);
+        if (missile == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("无法生成 BVR 实弹"));
+            return 0;
+        }
+        missile.setTestMissile(false);
+        missile.setTestGuided(true);
+        missile.setOwner(shooter);
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+                "已发射 800 格实弹 ARH，目标：" + target.getName().getString()
+                        + "（直接命中 25，6 b 内溅射 8）"), false);
+        return 1;
+    }
+
+    /** 在目标视线水平前方 distance 格、地形上方 60~80 b 取点并加载区块。 */
+    private static Vec3 bvrSpawnPoint(ServerPlayer target, double distance) {
+        ServerLevel level = target.serverLevel();
+        Vec3 eye = target.getEyePosition();
+        Vec3 look = target.getLookAngle();
+        Vec3 flat = new Vec3(look.x, 0.0, look.z);
+        if (flat.lengthSqr() < 1.0E-6) flat = new Vec3(0, 0, 1);
+        flat = flat.normalize();
+        Vec3 horizontal = eye.add(flat.scale(distance));
+        BlockPos column = BlockPos.containing(horizontal);
+        level.getChunkAt(column);
+        int surface = level.getHeight(Heightmap.Types.WORLD_SURFACE,
+                column.getX(), column.getZ());
+        double y = Math.max(eye.y + 60.0, surface + 80.0);
+        return new Vec3(horizontal.x, y, horizontal.z);
+    }
+
     /** BVR 测试：在玩家前方 ~600 格生成带区块保活的 AI 目标（缓慢接近）。 */
     private static int spawnBvrTarget(CommandSourceStack source) {
         if (!(source.getEntity() instanceof ServerPlayer player)) {
@@ -365,10 +464,10 @@ public final class SensorDebugCommand {
         }
         missile.setPos(pos.x, pos.y, pos.z);
         missile.setTestMissile(true);
-        if (missile instanceof SarhMissileArrow sarh && target != null) {
-            sarh.setTestGuided(true);
+        if (target != null) {
+            missile.setTestGuided(true);
+            missile.setTarget(target);
         }
-        if (target != null) missile.setTarget(target);
         level.addFreshEntity(missile);
         missile.setDeltaMovement(motion);
         return missile;

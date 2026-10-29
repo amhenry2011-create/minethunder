@@ -107,6 +107,11 @@ public record MissileFirePacket(int guidance, int targetId,
                 reject(player, "目标超出导弹射程");
                 return;
             }
+            if (mode.usesNotch() && targetClass == com.minethunder.radar.RadarTargetClass.AIR
+                    && !RadarCore.hasValidDoppler(player, target)) {
+                reject(player, "目标处于多普勒盲区");
+                return;
+            }
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),
                     target.getBoundingBox().getCenter(), targetClass)) {
                 reject(player, "目标被地形遮挡");

@@ -12,8 +12,11 @@ import com.minethunder.missile.MissileSpec;
  * - HIGH：红色双环；高置信稳定锁定。
  *
  * 离轴角只影响信号质量（填充速度），不阻断推进或发射：
- * 只要存在雷达锁定（硬锁/ TWS / BVR 远程锁）就能走完白/红环阶段并发射，
+ * 只要存在有效雷达锁定且目标有多普勒，就能走完白/红环阶段并发射，
  * 大离轴也可发射；发射许可由 canLaunchArh/canLaunchSarh 控制。
+ *
+ * 50 b 外无多普勒（39/Notch）时进度停止并衰减，持续 1.5 s 后回到 SEARCHING；
+ * 50 b 内为烧穿区，静止目标仍可正常锁定。
  */
 public final class SeekerLockModel {
 
@@ -27,9 +30,10 @@ public final class SeekerLockModel {
     private static final double NOTCH_CLOSURE = RadarCore.DOPPLER_NOTCH_THRESHOLD;
     private static final double ACQUIRE_SECONDS = 1.6;
     private static final double ACQUIRE_QUALITY = 0.12;
-    private static final double LOSE_QUALITY = 0.04;
     private static final double ENTER_QUALITY = 0.60;
     private static final double EXIT_QUALITY = 0.40;
+    /** 无多普勒持续该时间后导引头完全回到搜索状态。 */
+    private static final double NOTCH_HOLD_SECONDS = 1.5;
 
     /**
      * 极高信号质量：白弧/红弧可在一两 tick 内直接填满（不做阈值跳段，
@@ -37,18 +41,14 @@ public final class SeekerLockModel {
      */
     private static final double INSTANT_QUALITY = 0.90;
 
-    /**
-     * 锁定成立后的信号质量下限（保底）：离轴/距离/接近率只影响填充速度，
-     * 任何锁定（硬锁 / TWS / BVR）都能走完白/红环阶段并发射，不会被卡在 SEARCHING。
-     */
-    private static final double LOCKED_QUALITY_FLOOR = 0.5;
-
     private State state = State.SEARCHING;
     private double progress;
     private double stability;
     private double quality;
     private boolean inEnvelope;
     private boolean radarLocked;
+    private boolean dopplerValid;
+    private double notchSeconds;
 
     public State state() {
         return state;
@@ -74,6 +74,11 @@ public final class SeekerLockModel {
         return radarLocked;
     }
 
+    /** 当前目标是否具有有效多普勒（或处于 50 b 烧穿区）。 */
+    public boolean dopplerValid() {
+        return dopplerValid;
+    }
+
     /** 红色倒计时/红色双环阶段。 */
     public boolean isRed() {
         return state == State.TRACKING || state == State.HIGH;
@@ -96,6 +101,8 @@ public final class SeekerLockModel {
         quality = 0;
         inEnvelope = false;
         radarLocked = false;
+        dopplerValid = false;
+        notchSeconds = 0.0;
     }
 
     /**
@@ -119,6 +126,15 @@ public final class SeekerLockModel {
             return;
         }
 
+        boolean validDoppler = Math.abs(closure) >= NOTCH_CLOSURE
+                || range <= RadarCore.NOTCH_BURN_THROUGH_RANGE;
+        dopplerValid = validDoppler;
+        if (!validDoppler) {
+            decayNotch(dt);
+            return;
+        }
+        notchSeconds = 0.0;
+
         // 离轴角只压低信号质量（万向角内为准，超出仍有基础质量），不阻断推进。
         double gimbal = Math.max(spec.lockAngleMaxDeg, 1.0);
         double angleMargin = clamp(1.0 - offBoresightDeg / gimbal, 0.0, 1.0);
@@ -128,8 +144,6 @@ public final class SeekerLockModel {
 
         quality = clamp(0.45 * angleMargin + 0.25 * rangeMargin
                 + 0.15 * closureQuality + 0.15 * notchQuality, 0.0, 1.0);
-        // 锁定即可推进：保底质量保证大离轴/远距离/低接近率也能走完白/红环。
-        quality = Math.max(quality, LOCKED_QUALITY_FLOOR);
 
         inEnvelope = range <= spec.maxDistance && quality >= EXIT_QUALITY;
 
@@ -145,22 +159,21 @@ public final class SeekerLockModel {
                 }
             }
             case ACQUIRING -> {
-                progress += dt * fillRate(quality);
-                if (quality >= INSTANT_QUALITY) {
-                    progress = 1.0;
-                }
-                if (progress >= 1.0) {
-                    progress = 1.0;
-                    state = State.TRACKING;
-                    stability = 0.0;
-                } else if (progress <= 0.0) {
-                    progress = 0.0;
-                    state = State.SEARCHING;
-                } else if (quality < LOSE_QUALITY) {
+                if (quality < ACQUIRE_QUALITY) {
                     progress -= dt * 1.2;
                     if (progress <= 0.0) {
                         progress = 0.0;
                         state = State.SEARCHING;
+                    }
+                } else {
+                    progress += dt * fillRate(quality);
+                    if (quality >= INSTANT_QUALITY) {
+                        progress = 1.0;
+                    }
+                    if (progress >= 1.0) {
+                        progress = 1.0;
+                        state = State.TRACKING;
+                        stability = 0.0;
                     }
                 }
             }
@@ -183,6 +196,29 @@ public final class SeekerLockModel {
                     stability = 0.5;
                 }
             }
+        }
+    }
+
+    /**
+     * 50 b 外无多普勒：停止填充并衰减，持续 1.5 s 后完全掉回搜索。
+     * HIGH 先退到 TRACKING；TRACKING/ACQUIRING 的进度随 Notch 时间衰减。
+     */
+    private void decayNotch(double dt) {
+        notchSeconds += dt;
+        quality = 0.0;
+        inEnvelope = false;
+        if (state == State.HIGH) {
+            state = State.TRACKING;
+            stability = Math.min(stability, 0.5);
+        }
+        stability = Math.max(0.0, stability - dt * 1.2);
+        if (state == State.ACQUIRING) {
+            progress = Math.max(0.0, progress - dt * 1.2);
+        }
+        if (notchSeconds >= NOTCH_HOLD_SECONDS) {
+            state = State.SEARCHING;
+            progress = 0.0;
+            stability = 0.0;
         }
     }
 

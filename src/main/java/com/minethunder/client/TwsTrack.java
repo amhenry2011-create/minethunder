@@ -17,6 +17,7 @@ public final class TwsTrack {
     public int lastPaintTick;
     public int lastUpdateTick;
     public int hits;
+    public int notchTicks;
     public boolean confirmed;
 
     public TwsTrack(UUID uuid, int entityId, Vec3 position, Vec3 velocity,

@@ -70,6 +70,7 @@ public class ArhMissileArrow extends MissileArrow {
         Vec3 to = target.getBoundingBox().getCenter().subtract(pos);
         double distance = to.length();
         if (distance < 0.5 || distance > effectiveSeekerRange()) return false;
+        if (!testGuided && !RadarCore.hasValidDoppler(this, target)) return false;
 
         Vec3 forward = getDeltaMovement();
         if (forward.lengthSqr() < 1.0E-6) {
@@ -104,6 +105,7 @@ public class ArhMissileArrow extends MissileArrow {
             Vec3 to = candidate.getBoundingBox().getCenter().subtract(pos);
             double distance = to.length();
             if (distance < 0.5 || distance > range) continue;
+            if (!testGuided && !RadarCore.hasValidDoppler(this, candidate)) continue;
 
             double angle = Math.toDegrees(Math.acos(
                     clamp(forward.dot(to.normalize()), -1.0, 1.0)));

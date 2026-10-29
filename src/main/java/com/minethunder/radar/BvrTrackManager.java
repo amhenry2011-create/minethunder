@@ -133,6 +133,8 @@ public final class BvrTrackManager {
         Vec3 eye = viewer.getEyePosition();
         ServerLevel level = viewer.serverLevel();
         for (BvrTrack track : tracks) {
+            Entity source = BvrTicketService.findTrackedEntity(viewer.server, track.uuid());
+            if (source == null || source.level() != level) continue;
             double distance = track.position().distanceTo(eye);
             if (distance < 1.0 || distance > RANGE) continue;
             if (track.kind() == BvrKind.MISSILE) {
