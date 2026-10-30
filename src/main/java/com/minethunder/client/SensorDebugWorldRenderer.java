@@ -1,7 +1,10 @@
 package com.minethunder.client;
 
 import com.minethunder.MineThunder;
+import com.minethunder.radar.BvrKind;
+import com.minethunder.radar.BvrTrack;
 import com.minethunder.radar.RadarMode;
+import com.minethunder.radar.RadarTargetClass;
 import com.minethunder.sensor.SensorDebugState;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -104,11 +107,36 @@ public final class SensorDebugWorldRenderer {
                         selected ? SELECTED_FILL : TRACK_FILL,
                         selected ? SELECTED_EDGE : TRACK_EDGE);
             }
-            return beams;
+        } else {
+            addScanBeam(beams, player, eye, partialTick, SCAN_FILL, SCAN_EDGE);
         }
 
-        addScanBeam(beams, player, eye, partialTick, SCAN_FILL, SCAN_EDGE);
+        addBvrBeams(beams, player, eye, partialTick);
         return beams;
+    }
+
+    /** 传感器视觉中的 BVR 数据链波束：本地已加载目标由本地渲染负责，避免重复。 */
+    private static void addBvrBeams(List<Beam> beams, Player player, Vec3 eye,
+                                    float partialTick) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return;
+        double range = RadarHud.effectiveRange();
+        for (BvrTrack track : BvrState.active()) {
+            if (player.getUUID().equals(track.uuid())) continue;
+            if (mc.level.getEntity(track.entityId()) != null) continue;
+            RadarTargetClass cls = switch (track.kind()) {
+                case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+                case SURFACE -> RadarTargetClass.SEA;
+            };
+            if (!RadarHud.currentMode.accepts(cls)) continue;
+            Vec3 pos = BvrState.lagCompensatedPosition(track);
+            if (eye.distanceTo(pos) > range) continue;
+            TrackedTarget target = TrackedTarget.bvr(
+                    track, BvrState.painted(track.uuid()), cls);
+            addTrackedBeam(beams, eye, target, partialTick,
+                    track.test() ? SELECTED_FILL : TRACK_FILL,
+                    track.test() ? SELECTED_EDGE : TRACK_EDGE);
+        }
     }
 
     private static void addScanBeam(List<Beam> beams, Player player, Vec3 eye,

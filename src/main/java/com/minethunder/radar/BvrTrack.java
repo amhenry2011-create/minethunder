@@ -9,5 +9,6 @@ public record BvrTrack(java.util.UUID uuid, BvrKind kind,
                        @Nullable java.util.UUID ownerUuid,
                        String name,
                        Vec3 position, Vec3 velocity,
-                       int entityId) {
+                       int entityId,
+                       boolean test) {
 }

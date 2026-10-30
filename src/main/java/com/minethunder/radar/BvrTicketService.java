@@ -67,6 +67,18 @@ public final class BvrTicketService {
         return TICKETS.size();
     }
 
+    /**
+     * 生成后立即强制实体 ticking。远距离测试弹所在区块通常只被加载、
+     * 不在 entity-ticking 状态；若等到下一次 sweep，实体可能永远不会 tick。
+     */
+    public static void trackNow(Entity entity) {
+        if (entity == null || !entity.isAlive() || !isTrackable(entity)) return;
+        ensure(entity);
+        if (entity instanceof MissileArrow) {
+            MISSILE_TICKETS.add(entity.getUUID());
+        }
+    }
+
     public static int manualCount() {
         return MANUAL.size();
     }

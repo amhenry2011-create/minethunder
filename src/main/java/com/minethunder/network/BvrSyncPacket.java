@@ -35,7 +35,8 @@ public record BvrSyncPacket(List<BvrTrack> tracks) implements CustomPacketPayloa
                     buf.readUtf(48),
                     new Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble()),
                     new Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble()),
-                    buf.readVarInt()));
+                    buf.readVarInt(),
+                    buf.readBoolean()));
         }
         return list;
     }
@@ -55,6 +56,7 @@ public record BvrSyncPacket(List<BvrTrack> tracks) implements CustomPacketPayloa
             buf.writeDouble(track.velocity().y);
             buf.writeDouble(track.velocity().z);
             buf.writeVarInt(track.entityId());
+            buf.writeBoolean(track.test());
         }
     }
 

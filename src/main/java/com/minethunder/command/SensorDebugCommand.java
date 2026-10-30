@@ -35,6 +35,10 @@ import javax.annotation.Nullable;
 public final class SensorDebugCommand {
     private SensorDebugCommand() {}
 
+    /** 测试弹虚拟敌机 UUID：不是玩家，仅用于 RWR 方向/威胁判定。 */
+    private static final java.util.UUID BVR_TEST_OWNER =
+            java.util.UUID.fromString("00000000-0000-0000-0000-00000000b7e5");
+
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("minethunder")
@@ -295,9 +299,11 @@ public final class SensorDebugCommand {
             source.sendFailure(net.minecraft.network.chat.Component.literal("无法生成 BVR 测试弹"));
             return 0;
         }
+        missile.setVirtualOwner(BVR_TEST_OWNER);
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
-                "已生成 800 格外无伤害 " + spec.name + " 来袭测试，目标："
-                        + target.getName().getString()), false);
+                    "已生成 800 格外无伤害 " + spec.name + " 来袭测试，目标："
+                            + target.getName().getString()
+                            + "（雷达切到 1000 b，Alt+Q）"), false);
         return 1;
     }
 
@@ -320,10 +326,10 @@ public final class SensorDebugCommand {
         }
         missile.setTestMissile(false);
         missile.setTestGuided(true);
-        missile.setOwner(shooter);
+        missile.setVirtualOwner(BVR_TEST_OWNER);
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
-                "已发射 800 格实弹 ARH，目标：" + target.getName().getString()
-                        + "（直接命中 25，6 b 内溅射 8）"), false);
+                    "已发射 800 格实弹 ARH，目标：" + target.getName().getString()
+                            + "（直接命中 25，6 b 内溅射 8；雷达切到 1000 b，Alt+Q）"), false);
         return 1;
     }
 
@@ -407,14 +413,16 @@ public final class SensorDebugCommand {
         if (!(source.getEntity() instanceof ServerPlayer player)) return 0;
         int removed = 0;
         for (Entity entity : player.serverLevel().getAllEntities()) {
-            if (entity.getTags().contains(com.minethunder.radar.BvrTicketService.BVR_TAG)) {
+            if (entity.getTags().contains(com.minethunder.radar.BvrTicketService.BVR_TAG)
+                    || entity instanceof MissileArrow missile
+                    && (missile.isTestBvrTrack() || missile.isTestGuided())) {
                 entity.discard();
                 removed++;
             }
         }
         final int count = removed;
         source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
-                "已清除 " + count + " 个 BVR 测试目标"), false);
+                "已清除 " + count + " 个 BVR 测试目标/测试弹"), false);
         return 1;
     }
 
@@ -464,12 +472,14 @@ public final class SensorDebugCommand {
         }
         missile.setPos(pos.x, pos.y, pos.z);
         missile.setTestMissile(true);
+        missile.setTestBvrTrack(true);
         if (target != null) {
             missile.setTestGuided(true);
             missile.setTarget(target);
         }
         level.addFreshEntity(missile);
         missile.setDeltaMovement(motion);
+        com.minethunder.radar.BvrTicketService.trackNow(missile);
         return missile;
     }
 }

@@ -6,9 +6,12 @@ import com.minethunder.missile.IrHeat;
 import com.minethunder.missile.IrTargeting;
 import com.minethunder.missile.MissileArrow;
 import com.minethunder.missile.MissileSpec;
+import com.minethunder.radar.BvrKind;
+import com.minethunder.radar.BvrTrack;
 import com.minethunder.radar.RadarContact;
 import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.RadarMode;
+import com.minethunder.radar.RadarTargetClass;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.entity.Entity;
@@ -16,6 +19,8 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 
 import javax.annotation.Nullable;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -283,8 +288,10 @@ public final class SensorDebugRenderer {
         int cx = screenW / 2;
         int cy = screenH / 2;
         int count = 0;
+        Set<UUID> localIds = new HashSet<>();
         for (RadarContact contact : RadarHud.contacts) {
             if (count++ >= 12) break;
+            localIds.add(contact.entity.getUUID());
             float[] p = RadarHudRenderer.worldToScreen(contact.position, mc.player, screenW, screenH);
             if (p == null || p[0] < 0 || p[0] > screenW || p[1] < 0 || p[1] > screenH) continue;
             int x = (int) p[0];
@@ -302,14 +309,61 @@ public final class SensorDebugRenderer {
             };
             drawTag(g, x + 9, y + 9, lines, color, screenW, screenH);
         }
+
+        double range = RadarHud.effectiveRange();
+        for (BvrTrack track : BvrState.active()) {
+            if (count++ >= 18) break;
+            if (localIds.contains(track.uuid())) continue;
+            RadarTargetClass cls = bvrClass(track.kind());
+            if (!RadarHud.currentMode.accepts(cls)) continue;
+            Vec3 pos = BvrState.lagCompensatedPosition(track);
+            double distance = mc.player.getEyePosition().distanceTo(pos);
+            if (distance < 0.1 || distance > range) continue;
+            float[] p = RadarHudRenderer.worldToScreen(pos, mc.player, screenW, screenH);
+            if (p == null || p[0] < 0 || p[0] > screenW || p[1] < 0 || p[1] > screenH) continue;
+            int x = (int) p[0];
+            int y = (int) p[1];
+            int color = track.test() ? AMBER : CYAN;
+            drawLine(g, cx, cy, x, y, track.test() ? 0x50FFC040 : 0x5044DDFF);
+            drawBox(g, x, y, 5, color);
+            String[] lines = {
+                    "BVR 航迹：" + track.name(),
+                    String.format("距离：%.1f b  速度：%.1f b/s",
+                            distance, track.velocity().length() * 20.0),
+                    "类型：" + bvrKindName(track.kind())
+                            + (track.test() ? "  [测试弹]" : ""),
+                    "主人：" + (track.ownerUuid() == null ? "-" : track.ownerUuid()),
+                    "数据链：实时（无本地实体也可显示）"
+            };
+            drawTag(g, x + 9, y + 9, lines, color, screenW, screenH);
+        }
     }
+
+    private static RadarTargetClass bvrClass(BvrKind kind) {
+        return switch (kind) {
+            case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
+            case SURFACE -> RadarTargetClass.SEA;
+        };
+    }
+
+    private static String bvrKindName(BvrKind kind) {
+        return switch (kind) {
+            case PLAYER -> "玩家";
+            case AI -> "空中目标";
+            case MISSILE -> "导弹";
+            case SURFACE -> "海面目标";
+        };
+    }
+
 
     private static void drawMissiles(GuiGraphics g, Minecraft mc, int screenW, int screenH) {
         int count = 0;
+        Set<UUID> localIds = new HashSet<>();
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (!(entity instanceof MissileArrow missile)) continue;
             if (mc.player.distanceTo(entity) > 512.0) continue;
             if (count++ >= 8) break;
+            localIds.add(entity.getUUID());
 
             float[] p = RadarHudRenderer.worldToScreen(entity.getBoundingBox().getCenter(),
                     mc.player, screenW, screenH);
@@ -344,6 +398,31 @@ public final class SensorDebugRenderer {
                     String.format("飞行距离：%.1f b", missile.getDistanceFlown()),
                     String.format("近炸引信：%.1f b", spec.proximityFuseRadius),
                     "目标：" + (target == null ? "无" : target.getName().getString())
+            };
+            drawTag(g, x + 10, y + 10, lines, RED, screenW, screenH);
+        }
+
+        double range = RadarHud.effectiveRange();
+        for (BvrTrack track : BvrState.active()) {
+            if (track.kind() != BvrKind.MISSILE || localIds.contains(track.uuid())) continue;
+            if (!RadarHud.currentMode.accepts(RadarTargetClass.AIR)) continue;
+            Vec3 pos = BvrState.lagCompensatedPosition(track);
+            double distance = mc.player.getEyePosition().distanceTo(pos);
+            if (distance < 0.1 || distance > range) continue;
+            float[] p = RadarHudRenderer.worldToScreen(pos, mc.player, screenW, screenH);
+            if (p == null) continue;
+            int x = (int) p[0];
+            int y = (int) p[1];
+            drawBox(g, x, y, 6, RED);
+            drawLine(g, x - 8, y, x + 8, y, RED);
+            drawLine(g, x, y - 8, x, y + 8, RED);
+            String[] lines = {
+                    "BVR 导弹：" + track.name(),
+                    String.format("速度：%.1f b/s", track.velocity().length() * 20.0),
+                    String.format("距本机：%.1f b", distance),
+                    "主人：" + (track.ownerUuid() == null ? "-" : track.ownerUuid()),
+                    track.test() ? "测试弹：是（虚拟主人）" : "测试弹：否",
+                    "数据链实时位置"
             };
             drawTag(g, x + 10, y + 10, lines, RED, screenW, screenH);
         }

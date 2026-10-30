@@ -31,10 +31,8 @@ import java.util.UUID;
 public final class BvrTrackManager {
     private BvrTrackManager() {}
 
-    /** 目标航迹最大发布距离（60=600 格 → 1000 格档）。 */
+    /** 目标航迹最大发布距离（1000 格档）。 */
     public static final double RANGE = 1000.0;
-    /** 非本机导弹只发布到 600 格内。 */
-    public static final double MISSILE_RANGE = 600.0;
     /** 每次快照最多发布的航迹数。 */
     private static final int MAX_TRACKS = 48;
 
@@ -64,7 +62,7 @@ public final class BvrTrackManager {
                 tracks.add(new BvrTrack(player.getUUID(), BvrKind.PLAYER,
                         player.getUUID(), player.getGameProfile().getName(),
                         player.getBoundingBox().getCenter(), player.getDeltaMovement(),
-                        player.getId()));
+                        player.getId(), false));
             }
             for (Entity entity : level.getAllEntities()) {
                 UUID uuid = entity.getUUID();
@@ -74,15 +72,15 @@ public final class BvrTrackManager {
                     tracks.add(new BvrTrack(uuid, classify(entity),
                             null, nameOf(entity),
                             entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
-                            entity.getId()));
+                            entity.getId(), false));
                 } else if (entity instanceof com.minethunder.missile.MissileArrow missile) {
                     collected.add(uuid);
-                    Entity owner = missile.getOwner();
+                    UUID owner = missile.getOwnerUuid();
                     tracks.add(new BvrTrack(uuid, BvrKind.MISSILE,
-                            owner == null ? null : owner.getUUID(),
-                            "MSL",
+                            owner,
+                            missile.isTestBvrTrack() ? "TEST MSL" : "MSL",
                             entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
-                            entity.getId()));
+                            entity.getId(), missile.isTestBvrTrack()));
                 }
                 if (tracks.size() >= MAX_TRACKS * 2) return tracks;
             }
@@ -94,17 +92,17 @@ public final class BvrTrackManager {
             if (entity == null || !entity.isAlive()
                     || entity instanceof net.minecraft.world.entity.player.Player) continue;
             if (entity instanceof com.minethunder.missile.MissileArrow missile) {
-                Entity owner = missile.getOwner();
+                UUID owner = missile.getOwnerUuid();
                 tracks.add(new BvrTrack(uuid, BvrKind.MISSILE,
-                        owner == null ? null : owner.getUUID(),
-                        "MSL",
+                        owner,
+                        missile.isTestBvrTrack() ? "TEST MSL" : "MSL",
                         entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
-                        entity.getId()));
+                        entity.getId(), missile.isTestBvrTrack()));
             } else {
                 tracks.add(new BvrTrack(uuid, classify(entity),
                         null, nameOf(entity),
                         entity.getBoundingBox().getCenter(), entity.getDeltaMovement(),
-                        entity.getId()));
+                        entity.getId(), false));
             }
             collected.add(uuid);
             if (tracks.size() >= MAX_TRACKS * 2) break;
@@ -137,11 +135,8 @@ public final class BvrTrackManager {
             if (source == null || source.level() != level) continue;
             double distance = track.position().distanceTo(eye);
             if (distance < 1.0 || distance > RANGE) continue;
-            if (track.kind() == BvrKind.MISSILE) {
-                // 本机导弹永远可见（面板引导标记依赖）；他机导弹只发布到 600 格。
-                boolean own = viewer.getUUID().equals(track.ownerUuid());
-                if (!own && distance > MISSILE_RANGE) continue;
-            } else if (RadarCore.isOccludedForTarget(level, eye, track.position(),
+            if (track.kind() != BvrKind.MISSILE
+                    && RadarCore.isOccludedForTarget(level, eye, track.position(),
                     track.kind() == BvrKind.SURFACE
                             ? RadarTargetClass.SEA : RadarTargetClass.AIR)) {
                 // 被山体/地面遮挡的航迹直接不发布，避免锁定墙后目标。

@@ -199,8 +199,8 @@ public final class RwrManager {
         AABB area = new AABB(eye, eye).inflate(RANGE);
         for (MissileArrow missile : viewer.serverLevel().getEntitiesOfClass(MissileArrow.class, area)) {
             if (missile.getSpec().guidance == MissileSpec.Guidance.IR) continue;
-            Entity owner = missile.getOwner();
-            if (owner == viewer || !missile.isTargeting(viewer)) continue;
+            if (viewer.getUUID().equals(missile.getOwnerUuid())
+                    || !missile.isTargeting(viewer)) continue;
             Vec3 missilePos = missile.getBoundingBox().getCenter();
             double distance = missilePos.distanceTo(eye);
             if (distance < 0.5 || distance > RANGE || isVerticalBlind(eye, missilePos)) continue;

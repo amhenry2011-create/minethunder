@@ -119,6 +119,15 @@ public final class SeekerLockModel {
     public void update(double dt, boolean seekerOn, boolean radarLocked,
                        double offBoresightDeg, double range, double closure,
                        MissileSpec spec) {
+        update(dt, seekerOn, radarLocked, offBoresightDeg, range, closure, spec, true);
+    }
+
+    /**
+     * @param dopplerGated 是否应用空战 Notch 规则；GMI/SEA 地面/海面目标为 false。
+     */
+    public void update(double dt, boolean seekerOn, boolean radarLocked,
+                       double offBoresightDeg, double range, double closure,
+                       MissileSpec spec, boolean dopplerGated) {
         this.radarLocked = radarLocked;
 
         if (!seekerOn || !radarLocked || spec == null) {
@@ -126,7 +135,8 @@ public final class SeekerLockModel {
             return;
         }
 
-        boolean validDoppler = Math.abs(closure) >= NOTCH_CLOSURE
+        boolean validDoppler = !dopplerGated
+                || Math.abs(closure) >= NOTCH_CLOSURE
                 || range <= RadarCore.NOTCH_BURN_THROUGH_RANGE;
         dopplerValid = validDoppler;
         if (!validDoppler) {
@@ -135,12 +145,12 @@ public final class SeekerLockModel {
         }
         notchSeconds = 0.0;
 
-        // 离轴角只压低信号质量（万向角内为准，超出仍有基础质量），不阻断推进。
+        // 离轴角只压低信号质量（万向角内为准，超出仍有基础质量），不阻断推进�?
         double gimbal = Math.max(spec.lockAngleMaxDeg, 1.0);
         double angleMargin = clamp(1.0 - offBoresightDeg / gimbal, 0.0, 1.0);
         double rangeMargin = clamp(1.0 - range / Math.max(spec.acquireRange(), 1.0), 0.0, 1.0);
         double closureQuality = clamp(Math.abs(closure) / 300.0, 0.0, 1.0);
-        double notchQuality = Math.abs(closure) < NOTCH_CLOSURE ? 0.1 : 1.0;
+        double notchQuality = !dopplerGated || Math.abs(closure) >= NOTCH_CLOSURE ? 1.0 : 0.1;
 
         quality = clamp(0.45 * angleMargin + 0.25 * rangeMargin
                 + 0.15 * closureQuality + 0.15 * notchQuality, 0.0, 1.0);

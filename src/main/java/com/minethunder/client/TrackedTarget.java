@@ -88,8 +88,12 @@ public final class TrackedTarget {
         return entity != null;
     }
 
+    public boolean isSelf(Player player) {
+        return player.getUUID().equals(uuid);
+    }
+
     public boolean isOwnedBy(Player player) {
-        if (player.getUUID().equals(uuid)) return true;
+        if (isSelf(player)) return true;
         return bvr != null && player.getUUID().equals(bvr.ownerUuid());
     }
 
@@ -129,7 +133,7 @@ public final class TrackedTarget {
     }
 
     public boolean alive(Player player) {
-        if (isOwnedBy(player)) return false;
+        if (isSelf(player)) return false;
         if (entity != null) return entity.isAlive();
         return bvr != null;
     }

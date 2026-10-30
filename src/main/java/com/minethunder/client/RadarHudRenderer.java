@@ -175,10 +175,10 @@ public final class RadarHudRenderer {
         double range = Math.max(RadarHud.effectiveRange(), 1.0);
         if (RadarHud.currentMode == RadarMode.TWS) {
             drawTwsContacts(g, mc, px, py, size, range, nowTick);
-            return;
         }
 
         for (RadarEcho echo : RadarHud.echoes.values()) {
+            if (RadarHud.currentMode == RadarMode.TWS) break;
             if (echo.expired(nowTick)) continue;
             Entity entity = mc.level == null ? null : mc.level.getEntity(echo.entityId);
             com.minethunder.radar.RadarTargetClass currentClass =
@@ -256,8 +256,6 @@ public final class RadarHudRenderer {
         bvrRight = bvrRight.normalize();
         for (BvrTrack track : BvrState.active()) {
             if (mc.player.getUUID().equals(track.uuid())) continue;
-            if (track.kind() == BvrKind.MISSILE
-                    && mc.player.getUUID().equals(track.ownerUuid())) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
             if (localEchoVisible(mc, bvrShadow, nowTick, false)) continue;
             RadarTargetClass bvrClass = switch (track.kind()) {

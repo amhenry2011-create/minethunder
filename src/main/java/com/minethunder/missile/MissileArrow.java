@@ -14,6 +14,7 @@ import com.minethunder.radar.RadarCore;
 import com.minethunder.radar.ServerRadarState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.particles.ParticleTypes;
@@ -36,6 +37,14 @@ import java.util.UUID;
  * - ARH：中段惯性/指令飞行，末段（超过导引头开机距离）自开雷达寻的。
  */
 public abstract class MissileArrow extends AbstractArrow {
+    /** 高度储能/滑翔阶段。 */
+    public enum EnergyPhase {
+        DIRECT,
+        BOOST_CLIMB,
+        GLIDE,
+        TERMINAL
+    }
+
     private static final EntityDataAccessor<Optional<UUID>> DATA_TARGET =
             SynchedEntityData.defineId(MissileArrow.class, EntityDataSerializers.OPTIONAL_UUID);
     /** 发射者 UUID 同步给客户端（owner 实体未在客户端加载时仍可识别本机导弹）。 */
@@ -57,6 +66,10 @@ public abstract class MissileArrow extends AbstractArrow {
     protected boolean testMissile = false;
     /** 测试制导：绕过载机数据链/照射，直接按测试目标制导。 */
     protected boolean testGuided = false;
+    /** 测试弹航迹：允许在雷达上显示自机测试弹，并突破 600 b 的非本机导弹限制。 */
+    protected boolean testBvrTrack = false;
+    /** 测试弹虚拟主人：不冒充玩家，只用于 RWR 敌我识别和导弹方向显示。 */
+    @Nullable protected UUID virtualOwnerUuid;
     /** 中段数据链/IOG 最后航迹。 */
     @Nullable protected Vec3 lastKnownTargetPos;
     protected Vec3 lastKnownTargetVelocity = Vec3.ZERO;
@@ -78,6 +91,13 @@ public abstract class MissileArrow extends AbstractArrow {
     /** 低速看门狗：非测试弹低速悬停计数（滑翔段阻力清零属于异常）。 */
     protected int slowSpeedTicks;
 
+    /** 高度储能：比机械能（J/kg），e = v²/2 + g·h。 */
+    protected double specificEnergyJkg;
+    protected double energyLaunchY;
+    protected boolean energyInitialized;
+    protected EnergyPhase flightPhase = EnergyPhase.DIRECT;
+
+    private static final double GRAVITY = 9.81;
     private static final int DATALINK_UPDATE_TICKS = 4;
     private static final double SERVO_TAU = 0.08;
     private static final double CONTROL_RAMP_SECONDS = 0.25;
@@ -106,6 +126,19 @@ public abstract class MissileArrow extends AbstractArrow {
         return distanceFlown;
     }
 
+    public EnergyPhase getFlightPhase() {
+        return flightPhase;
+    }
+
+    public double getSpecificEnergyJkg() {
+        return specificEnergyJkg;
+    }
+
+    public double getEnergyHeightMeters() {
+        double speed = getDeltaMovement().length() * 20.0;
+        return (position().y - energyLaunchY) + speed * speed / (2.0 * GRAVITY);
+    }
+
     public boolean isTestMissile() {
         return testMissile;
     }
@@ -116,6 +149,23 @@ public abstract class MissileArrow extends AbstractArrow {
 
     public void setTestGuided(boolean testGuided) {
         this.testGuided = testGuided;
+    }
+
+    public boolean isTestBvrTrack() {
+        return testBvrTrack;
+    }
+
+    public void setTestBvrTrack(boolean testBvrTrack) {
+        this.testBvrTrack = testBvrTrack;
+    }
+
+    public void setVirtualOwner(@Nullable UUID virtualOwnerUuid) {
+        this.virtualOwnerUuid = virtualOwnerUuid;
+    }
+
+    @Nullable
+    public UUID getVirtualOwner() {
+        return virtualOwnerUuid;
     }
 
     public void setTestMissile(boolean testMissile) {
@@ -228,6 +278,7 @@ public abstract class MissileArrow extends AbstractArrow {
     /** 客户端可用的发射者 UUID（owner 实体未同步时兜底）。 */
     @Nullable
     public UUID getOwnerUuid() {
+        if (virtualOwnerUuid != null) return virtualOwnerUuid;
         Optional<UUID> synced = entityData.get(DATA_OWNER_UUID);
         if (synced.isPresent()) {
             return synced.get();
@@ -264,6 +315,12 @@ public abstract class MissileArrow extends AbstractArrow {
         tag.putBoolean("MTPitbull", pitbullActive);
         tag.putBoolean("MTTest", testMissile);
         tag.putBoolean("MTTestGuided", testGuided);
+        tag.putBoolean("MTTestBvrTrack", testBvrTrack);
+        if (virtualOwnerUuid != null) tag.putString("MTVirtualOwner", virtualOwnerUuid.toString());
+        tag.putDouble("MTEnergy", specificEnergyJkg);
+        tag.putDouble("MTEnergyLaunchY", energyLaunchY);
+        tag.putBoolean("MTEnergyInit", energyInitialized);
+        tag.putString("MTFlightPhase", flightPhase.name());
         tag.putInt("MTDatalinkCooldown", datalinkUpdateCooldown);
         tag.putFloat("MTTrackQuality", trackQuality);
         tag.putInt("MTMeasuredTick", measuredTargetTick);
@@ -293,6 +350,17 @@ public abstract class MissileArrow extends AbstractArrow {
         pitbullActive = tag.getBoolean("MTPitbull");
         testMissile = tag.getBoolean("MTTest");
         testGuided = tag.getBoolean("MTTestGuided");
+        testBvrTrack = tag.getBoolean("MTTestBvrTrack");
+        virtualOwnerUuid = tag.contains("MTVirtualOwner")
+                ? parseUuid(tag.getString("MTVirtualOwner")) : null;
+        specificEnergyJkg = tag.getDouble("MTEnergy");
+        energyLaunchY = tag.getDouble("MTEnergyLaunchY");
+        energyInitialized = tag.getBoolean("MTEnergyInit");
+        try {
+            flightPhase = EnergyPhase.valueOf(tag.getString("MTFlightPhase"));
+        } catch (IllegalArgumentException ignored) {
+            flightPhase = EnergyPhase.DIRECT;
+        }
         datalinkUpdateCooldown = tag.getInt("MTDatalinkCooldown");
         trackQuality = tag.getFloat("MTTrackQuality");
         measuredTargetTick = tag.getInt("MTMeasuredTick");
@@ -389,7 +457,8 @@ public abstract class MissileArrow extends AbstractArrow {
         }
 
         // ARH 离架后 0.5 秒无动力下飘；SARH/IR 直接点火。
-        if (spec.guidance == MissileSpec.Guidance.ARH
+        if (!spec.energyEnabled()
+                && spec.guidance == MissileSpec.Guidance.ARH
                 && age / 20.0 < spec.ignitionDelay()) {
             setDeltaMovement(getDeltaMovement().add(0.0, -0.05, 0.0));
         }
@@ -425,6 +494,7 @@ public abstract class MissileArrow extends AbstractArrow {
 
         Entity target = resolveTarget();
         updateDatalinkMeasurement(target);
+        updateEnergyPhase(target);
         Entity decoy = findCountermeasure(target);
         Vec3 guidancePos = null;
         Vec3 guidanceVel = Vec3.ZERO;
@@ -651,15 +721,54 @@ public abstract class MissileArrow extends AbstractArrow {
         // 大过载转弯消耗动能，体现 4/8 点方向能量耗弹。
         double inducedDrag = servoAcceleration.length() / Math.max(speedMps, 1.0)
                 * 0.4 * dt;
-        speedMps = Math.max(0.0, speedMps - inducedDrag);
-        // 爬升需要付出势能，避免 loft 免费获得高度。
-        speedMps = Math.max(0.0, speedMps
-                - 9.81 * (newVelocity.y * 20.0) / Math.max(speedMps, 1.0) * dt);
+        if (spec.energyEnabled() && !level().isClientSide) {
+            specificEnergyJkg = Math.max(0.0,
+                    specificEnergyJkg - inducedDrag * Math.max(speedMps, 1.0));
+            speedMps = speedFromEnergy();
+        } else if (!spec.energyEnabled()) {
+            speedMps = Math.max(0.0, speedMps - inducedDrag);
+            // 非能量模型保留旧爬升代价。
+            speedMps = Math.max(0.0, speedMps
+                    - 9.81 * (newVelocity.y * 20.0) / Math.max(speedMps, 1.0) * dt);
+        }
 
         if (newVelocity.lengthSqr() > 1e-8) {
             newVelocity = newVelocity.normalize().scale(speedMps / 20.0);
         }
         setDeltaMovement(newVelocity);
+    }
+
+    /** 能量模型的速度反推；高度增加时速度下降，下降时速度上升。 */
+    private double speedFromEnergy() {
+        double height = position().y - energyLaunchY;
+        double kinetic = 2.0 * (specificEnergyJkg - GRAVITY * height);
+        double speed = Math.sqrt(Math.max(kinetic, 0.0));
+        return Math.max(spec.minEnergySpeed(), speed);
+    }
+
+    private void updateEnergyPhase(@Nullable Entity target) {
+        if (!spec.energyEnabled()) {
+            flightPhase = EnergyPhase.DIRECT;
+            return;
+        }
+        Vec3 targetPos = target != null && target.isAlive()
+                ? target.getBoundingBox().getCenter()
+                : lastKnownTargetPos;
+        if (targetPos == null) {
+            flightPhase = EnergyPhase.DIRECT;
+            return;
+        }
+        double range = position().distanceTo(targetPos);
+        boolean targetAbove = targetPos.y > position().y + 25.0;
+        if (range <= spec.terminalRange() || (pitbullActive && range <= 160.0)) {
+            flightPhase = EnergyPhase.TERMINAL;
+        } else if (range > spec.climbStartRange() && !targetAbove) {
+            flightPhase = EnergyPhase.BOOST_CLIMB;
+        } else if (range <= spec.terminalRange() + 20.0) {
+            flightPhase = EnergyPhase.TERMINAL;
+        } else {
+            flightPhase = EnergyPhase.GLIDE;
+        }
     }
 
     /**
@@ -668,6 +777,10 @@ public abstract class MissileArrow extends AbstractArrow {
      * 而不是立刻钳到 endSpeed —— 高速载机发射不再出现“急停”。
      */
     private void integratePropulsion() {
+        if (spec.energyEnabled()) {
+            integrateEnergyPropulsion();
+            return;
+        }
         double elapsed = age / 20.0;
         Vec3 velocity = getDeltaMovement();
         double speedMps = velocity.length() * 20.0;
@@ -684,6 +797,34 @@ public abstract class MissileArrow extends AbstractArrow {
         speedMps = Math.max(0.0, speedMps);
         if (velocity.lengthSqr() > 1.0E-8 && speedMps > 0.0) {
             setDeltaMovement(velocity.normalize().scale(speedMps / 20.0));
+        }
+    }
+
+    /**
+     * 高度储能推进：推力/阻力改变比机械能，速度由当前高度反推。
+     * 爬升自动减速并储存势能，下降自动释放势能。
+     */
+    private void integrateEnergyPropulsion() {
+        double elapsed = age / 20.0;
+        Vec3 velocity = getDeltaMovement();
+        double speed = velocity.length() * 20.0;
+        if (!energyInitialized) {
+            energyLaunchY = position().y;
+            specificEnergyJkg = 0.5 * speed * speed;
+            energyInitialized = true;
+        }
+        double dt = 1.0 / 20.0;
+        if (spec.isBoosting(elapsed)) {
+            double accel = spec.boostAcceleration(elapsed);
+            specificEnergyJkg += accel * Math.max(speed, 1.0) * dt;
+        } else if (elapsed > spec.ignitionDelay()) {
+            double drag = spec.dragDeceleration(speed, spec.massAt(elapsed));
+            specificEnergyJkg -= drag * Math.max(speed, 1.0) * dt;
+        }
+        specificEnergyJkg = Math.max(0.0, specificEnergyJkg);
+        speed = speedFromEnergy();
+        if (velocity.lengthSqr() > 1.0E-8) {
+            setDeltaMovement(velocity.normalize().scale(speed / 20.0));
         }
     }
 
@@ -869,14 +1010,18 @@ public abstract class MissileArrow extends AbstractArrow {
 
     /** ARH/SARH 中段 loft：远距离先爬升，终端取消。IR 不 loft。 */
     private Vec3 loftAimPoint(Vec3 targetPos, Vec3 pos) {
-        if (spec.guidance == MissileSpec.Guidance.IR) return targetPos;
+        if (!spec.energyEnabled() || flightPhase != EnergyPhase.BOOST_CLIMB) {
+            return targetPos;
+        }
         double dist = targetPos.distanceTo(pos);
         if (dist < 100.0 || age / 20.0 < spec.ignitionDelay() + 0.35) return targetPos;
         if (spec.guidance == MissileSpec.Guidance.ARH && pitbullActive) {
             return targetPos;
         }
-        double loft = Math.min(70.0, dist * 0.12);
-        if (targetPos.y > pos.y + 25.0) loft *= 0.35;
+        double above = targetPos.y - pos.y;
+        double loft = Math.max(0.0, spec.climbAltitude() - Math.max(0.0, above));
+        double maxRise = dist * Math.tan(Math.toRadians(spec.maxClimbAngleDeg()));
+        loft = Math.min(loft, Math.max(0.0, maxRise));
         return targetPos.add(0.0, loft, 0.0);
     }
 
@@ -965,8 +1110,19 @@ public abstract class MissileArrow extends AbstractArrow {
                         getX(), getY(), getZ(), 24, 1.8, 1.8, 1.8, 0.08);
             }
             if (!testMissile) destroyFragileBlocks();
+            notifyTestOutcome();
         }
         discard();
+    }
+
+    private void notifyTestOutcome() {
+        if (!testBvrTrack || level().isClientSide) return;
+        Entity recipient = getOwner() != null ? getOwner() : getTarget();
+        if (recipient instanceof ServerPlayer player) {
+            player.displayClientMessage(Component.literal(testMissile
+                    ? "BVR 测试弹命中/结束（无伤害）"
+                    : "BVR 实弹测试命中/结束"), true);
+        }
     }
 
     /**

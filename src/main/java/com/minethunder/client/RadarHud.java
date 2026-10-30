@@ -42,8 +42,8 @@ public final class RadarHud {
      *  搜索档位按实际波束宽度在面板内左右留出暗带。 */
     public static final double PANEL_AZIMUTH_DEG = 60.0;
     /** 距离档位：Q/Alt+Q 循环 */
-    public static final double[] RANGES = {40, 100, 300, 600, 1000};
-    public static int rangeIndex = 2;
+    public static final double[] RANGES = {300, 600, 1000};
+    public static int rangeIndex = 0;
     /** 真实雷达扫描模式：方位总宽度 × 仰角总覆盖。 */
     public record ScanPattern(String label, double halfAzimuthDeg,
                               double halfElevationDeg, int rows) {}
@@ -203,7 +203,7 @@ public final class RadarHud {
     /** 退出 TRK PD 后恢复的搜索模式 */
     public static RadarMode preLockMode = RadarMode.SRC_PD;
     /** 尝试锁定前的扫描参数快照，失败时恢复。 */
-    public static int preLockRangeIndex = 2;
+    public static int preLockRangeIndex = 0;
     public static int preLockScanPatternIndex = 2;
     public static double preLockScanAzimuthOffsetDeg = 0;
     public static double preLockScanElevationOffsetDeg = 0;

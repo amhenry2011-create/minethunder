@@ -69,6 +69,8 @@ public final class RadarHudClientTicker {
     private static java.util.UUID lastSentBvrUuid = null;
     private static int lastSentSource = -1;
     private static RadarMode lastMode = RadarMode.SRC_PD;
+    private static int lastScanPatternIndex = RadarHud.scanPatternIndex;
+    private static int lastRangeIndex = RadarHud.rangeIndex;
     /** 当前扫描行与上一 tick 的扫描位置，用于构造本 tick 扫过段。 */
     private static int scanRow = -1;
     private static int lastSweepRow = -1;
@@ -94,7 +96,8 @@ public final class RadarHudClientTicker {
         RadarHud.seekerEnabledTicks = RadarHud.seekerEnabled
                 ? RadarHud.seekerEnabledTicks + 1 : 0;
 
-        if (lastMode != RadarHud.currentMode) {
+        boolean modeChanged = lastMode != RadarHud.currentMode;
+        if (modeChanged) {
             boolean keepLockedTarget = RadarHud.currentMode == RadarMode.STT
                     && RadarHud.locked && RadarHud.lockedEntity != null
                     && RadarHud.lockedTargetSource == TargetSource.LOCAL;
@@ -104,16 +107,17 @@ public final class RadarHudClientTicker {
             clearRadarPanelForModeChange(keepLockedTarget);
         }
 
-        if ((lastMode == RadarMode.TWS || lastMode == RadarMode.STT)
-                && RadarHud.currentMode != RadarMode.TWS
-                && RadarHud.currentMode != RadarMode.STT) {
-            RadarHud.scanAzimuthOffsetDeg = 0;
-            RadarHud.scanElevationOffsetDeg = 0;
-        }
-        if (RadarHud.effectiveScanHalfDeg() >= RadarHud.PANEL_AZIMUTH_DEG - 0.01) {
-            RadarHud.scanAzimuthOffsetDeg = 0;
+        boolean patternChanged = lastScanPatternIndex != RadarHud.scanPatternIndex;
+        boolean rangeChanged = lastRangeIndex != RadarHud.rangeIndex;
+        if (modeChanged || patternChanged) {
+            resetScanSweep(true);
+        } else if (rangeChanged) {
+            resetScanSweep(false);
         }
         lastMode = RadarHud.currentMode;
+        lastScanPatternIndex = RadarHud.scanPatternIndex;
+        lastRangeIndex = RadarHud.rangeIndex;
+        clampScanOffsets();
         if (RadarHud.seekerEnabled && !hasRadarSeekerSource()) {
             disableSeeker("导引头：关闭");
         }
@@ -434,7 +438,7 @@ public final class RadarHudClientTicker {
             targetPos = entityTarget.getBoundingBox().getCenter();
             closure = RadarHud.locked ? RadarHud.lockedClosure
                     : (twsTrack == null ? 0.0 : twsTrack.closure);
-        } else if (lockTarget != null && !lockTarget.isOwnedBy(player)) {
+        } else if (lockTarget != null && !lockTarget.isSelf(player)) {
             sourceId = -(int) Math.abs((long) lockTarget.uuid.hashCode());
             targetPos = lockTarget.livePosition();
             closure = RadarHud.lockedClosure;
@@ -469,8 +473,17 @@ public final class RadarHudClientTicker {
         RadarHud.seekerRing.update(ringX, ringY, 0.05);
 
         boolean aligned = RadarHud.seekerRing.aligned();
+        RadarTargetClass targetClass = entityTarget == null
+                ? (lockTarget == null ? null : lockTarget.targetClass)
+                : RadarCore.classify(entityTarget);
+        RadarMode trackMode = RadarHud.currentMode == RadarMode.STT
+                && RadarHud.preLockMode != null
+                ? RadarHud.preLockMode : RadarHud.currentMode;
+        boolean dopplerGated = (targetClass == null
+                || targetClass == RadarTargetClass.AIR)
+                && trackMode.usesNotch();
         RadarHud.seekerModel.update(0.05, true, aligned, offBoresight, range,
-                closure, RadarHud.selectedSpec);
+                closure, RadarHud.selectedSpec, dopplerGated);
         RadarHud.lockProgress = (float) RadarHud.seekerModel.progress();
     }
 
@@ -835,18 +848,35 @@ public final class RadarHudClientTicker {
         double elevation = Math.toDegrees(RadarCore.elevationBetween(look, to));
         RadarTargetClass targetClass = tracked.targetClass == null
                 ? RadarCore.classify(target) : tracked.targetClass;
+        RadarMode trackMode = RadarHud.currentMode == RadarMode.STT
+                && RadarHud.preLockMode != null
+                ? RadarHud.preLockMode : RadarHud.currentMode;
+        boolean surfaceTarget = targetClass == RadarTargetClass.GROUND
+                || targetClass == RadarTargetClass.SEA;
         boolean occluded = target != null && targetClass != null
                 && RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass);
         boolean notching;
         if (target != null) {
-            notching = !RadarCore.hasValidDoppler(player, target);
+            notching = targetClass == RadarTargetClass.AIR
+                    && trackMode.usesNotch()
+                    && !RadarCore.hasValidDoppler(player, target);
+            if (trackMode == RadarMode.GMI && surfaceTarget) {
+                notching = target.getDeltaMovement().horizontalDistance() * 20.0
+                        < RadarCore.GMI_MIN_HORIZONTAL_SPEED;
+            }
         } else {
             Vec3 relativeVelocity = tracked.velocity().scale(20.0)
                     .subtract(player.getDeltaMovement().scale(20.0));
             double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                     : relativeVelocity.dot(to.normalize());
-            notching = range > RadarCore.NOTCH_BURN_THROUGH_RANGE
+            notching = targetClass == RadarTargetClass.AIR
+                    && trackMode.usesNotch()
+                    && range > RadarCore.NOTCH_BURN_THROUGH_RANGE
                     && Math.abs(radialVelocity) < RadarCore.DOPPLER_NOTCH_THRESHOLD;
+            if (trackMode == RadarMode.GMI && surfaceTarget) {
+                notching = tracked.velocity().horizontalDistance() * 20.0
+                        < RadarCore.GMI_MIN_HORIZONTAL_SPEED;
+            }
         }
         boolean valid = range > 0.1
                 && range <= RadarHud.effectiveRange()
@@ -871,7 +901,9 @@ public final class RadarHudClientTicker {
                 double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                         : relativeVelocity.dot(to.normalize());
                 double notchSeverity = RadarCore.isChaff(target) ? 0.0
-                        : RadarCore.notchSeverity(radialVelocity, range, RadarHud.currentMode);
+                        : targetClass == RadarTargetClass.AIR
+                        ? RadarCore.notchSeverity(radialVelocity, range, trackMode)
+                        : 0.0;
                 RadarContact contact = new RadarContact(target, range, azimuth, elevation,
                         radialVelocity, targetPos, false, notchSeverity > 0.4,
                         notchSeverity, targetClass);
@@ -977,11 +1009,6 @@ public final class RadarHudClientTicker {
 
     /** 当前模式是否允许建立该目标的锁定。 */
     private static boolean lockAllowed(Entity entity) {
-        Player player = Minecraft.getInstance().player;
-        if (entity instanceof MissileArrow missile && player != null
-                && player.getUUID().equals(missile.getOwnerUuid())) {
-            return false;
-        }
         RadarTargetClass targetClass = RadarCore.classify(entity);
         if (targetClass == null) return false;
         return switch (RadarHud.currentMode) {
@@ -1282,14 +1309,13 @@ public final class RadarHudClientTicker {
         Vec3 look = player.getViewVector(1.0F).normalize();
         double targetAz = Math.toDegrees(RadarCore.azimuthBetween(look, to));
         double targetEl = Math.toDegrees(RadarCore.elevationBetween(look, to));
-        if (RadarHud.effectiveScanHalfDeg() >= RadarHud.PANEL_AZIMUTH_DEG - 0.01) {
-            RadarHud.scanAzimuthOffsetDeg = 0;
-        } else {
-            float desiredAz = (float) Math.max(-30, Math.min(30, targetAz));
-            RadarHud.scanAzimuthOffsetDeg += (desiredAz - RadarHud.scanAzimuthOffsetDeg) * 0.25;
-        }
+        double azLimit = Math.max(0.0,
+                RadarHud.PANEL_AZIMUTH_DEG - RadarHud.effectiveScanHalfDeg());
+        float desiredAz = (float) clamp(targetAz, -azLimit, azLimit);
+        RadarHud.scanAzimuthOffsetDeg += (desiredAz - RadarHud.scanAzimuthOffsetDeg) * 0.25;
         float desiredEl = (float) Math.max(-60, Math.min(60, targetEl));
         RadarHud.scanElevationOffsetDeg += (desiredEl - RadarHud.scanElevationOffsetDeg) * 0.25;
+        clampScanOffsets();
     }
 
     /** STT/TRK PD 让扫描中心跟随硬锁目标，本地/BVR 都保持连续照射。 */
@@ -1301,14 +1327,13 @@ public final class RadarHudClientTicker {
         Vec3 look = player.getViewVector(1.0F).normalize();
         double targetAz = Math.toDegrees(RadarCore.azimuthBetween(look, to));
         double targetEl = Math.toDegrees(RadarCore.elevationBetween(look, to));
-        if (RadarHud.effectiveScanHalfDeg() >= RadarHud.PANEL_AZIMUTH_DEG - 0.01) {
-            RadarHud.scanAzimuthOffsetDeg = 0;
-        } else {
-            float desiredAz = (float) Math.max(-30, Math.min(30, targetAz));
-            RadarHud.scanAzimuthOffsetDeg += (desiredAz - RadarHud.scanAzimuthOffsetDeg) * 0.3;
-        }
+        double azLimit = Math.max(0.0,
+                RadarHud.PANEL_AZIMUTH_DEG - RadarHud.effectiveScanHalfDeg());
+        float desiredAz = (float) clamp(targetAz, -azLimit, azLimit);
+        RadarHud.scanAzimuthOffsetDeg += (desiredAz - RadarHud.scanAzimuthOffsetDeg) * 0.3;
         float desiredEl = (float) Math.max(-60, Math.min(60, targetEl));
         RadarHud.scanElevationOffsetDeg += (desiredEl - RadarHud.scanElevationOffsetDeg) * 0.3;
+        clampScanOffsets();
     }
 
     /** 主画面和雷达面板共用的横/竖扫描线状态。 */
@@ -1518,6 +1543,35 @@ public final class RadarHudClientTicker {
     public static void recenterScan() {
         RadarHud.scanAzimuthOffsetDeg = 0;
         RadarHud.scanElevationOffsetDeg = 0;
+        resetScanSweep(false);
+    }
+
+    /** 模式/扫描宽度/距离切换时清掉上一模式的扫描相位，避免天线继承旧方向。 */
+    private static void resetScanSweep(boolean clearOffsets) {
+        RadarHud.scanStartTick = -1;
+        scanRow = -1;
+        lastSweepRow = -1;
+        lastSweepAzimuth = 0;
+        RadarHud.sweepAzimuthDeg = 0f;
+        RadarHud.prevSweepAzimuthDeg = 0f;
+        RadarHud.sweepElevationDeg = 0f;
+        RadarHud.prevSweepElevationDeg = 0f;
+        if (clearOffsets) {
+            RadarHud.scanAzimuthOffsetDeg = 0;
+            RadarHud.scanElevationOffsetDeg = 0;
+        }
+    }
+
+    /** 扫描中心和半角相加不能越过面板前向范围。 */
+    private static void clampScanOffsets() {
+        double azLimit = Math.max(0.0,
+                RadarHud.PANEL_AZIMUTH_DEG - RadarHud.effectiveScanHalfDeg());
+        RadarHud.scanAzimuthOffsetDeg = clamp(
+                RadarHud.scanAzimuthOffsetDeg, -azLimit, azLimit);
+        double elLimit = Math.max(0.0,
+                RadarHud.SCAN_ELEVATION_HALF_DEG - RadarHud.effectiveScanElevationHalfDeg());
+        RadarHud.scanElevationOffsetDeg = clamp(
+                RadarHud.scanElevationOffsetDeg, -elLimit, elLimit);
     }
 
     private static boolean hasSeekerAmmo() {

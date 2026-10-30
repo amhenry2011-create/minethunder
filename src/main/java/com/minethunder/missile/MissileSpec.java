@@ -156,4 +156,34 @@ public final class MissileSpec {
     public double lateralAcceleration() {
         return maxG * 9.81;
     }
+
+    /** 高度储能/滑翔阶段：IR 保持直扑，不参与远程能量管理。 */
+    public boolean energyEnabled() {
+        return guidance != Guidance.IR;
+    }
+
+    /** 超过该距离开始考虑加速爬升。 */
+    public double climbStartRange() {
+        return 300.0;
+    }
+
+    /** 进入末段俯冲的距离。 */
+    public double terminalRange() {
+        return 120.0;
+    }
+
+    /** 最大爬升角，用于限制 loft 瞄准点高度。 */
+    public double maxClimbAngleDeg() {
+        return 25.0;
+    }
+
+    /** 相对目标点的爬升瞄准高度。 */
+    public double climbAltitude() {
+        return 80.0;
+    }
+
+    /** 能量不足时允许的最低滑翔速度。 */
+    public double minEnergySpeed() {
+        return 5.0;
+    }
 }
