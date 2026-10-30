@@ -883,8 +883,6 @@ public final class RadarHudRenderer {
         TwsTrack track = TwsTrackManager.selected();
         if (track == null || track.lastPaintTick < 0) return;
         int tick = mc.player.tickCount;
-        // 失去扫描更新后只保留惯性航迹，不再显示四角框或 INER。
-        if (track.coasting(tick)) return;
         String name = track.displayName;
         if (name == null || name.isEmpty()) {
             Entity entity = TwsTrackManager.entity(track.entityId);
