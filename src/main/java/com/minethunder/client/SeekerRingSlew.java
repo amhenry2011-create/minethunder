@@ -39,8 +39,9 @@ public final class SeekerRingSlew {
             return;
         }
         // 锁位后环跟随雷达锁定目标，不再平滑漂移。
-        x = targetX;
-        y = targetY;
+        double alpha = Math.min(1.0, dt / 0.12);
+        x += (targetX - x) * alpha;
+        y += (targetY - y) * alpha;
     }
 
     public double x() {

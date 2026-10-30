@@ -414,10 +414,8 @@ public final class KeyInputHandler {
                         "没有有效的雷达锁定或 TWS 跟踪"));
                 return;
             }
-            if (!RadarHud.seekerModel.canLaunchArh()) {
-                notifyClient(mc, Component.literal("导引头未对准目标"));
-                return;
-            }
+            // ARH 是主动雷达弹：TWS 软锁与 TRK 同等视为可发射来源，
+            // 导引头环只表示末段质量，不再阻断发射。
         }
         if (chosen == MissileSpec.Guidance.SARH) {
             if (!softSource) {

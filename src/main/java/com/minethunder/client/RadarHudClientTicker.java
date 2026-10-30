@@ -439,9 +439,15 @@ public final class RadarHudClientTicker {
         double closure;
         if (entityTarget != null) {
             sourceId = entityTarget.getId();
-            targetPos = entityTarget.getBoundingBox().getCenter();
+            targetPos = twsTrack != null
+                    ? twsTrack.predictedPosition(player.tickCount)
+                    : entityTarget.getBoundingBox().getCenter();
             closure = RadarHud.locked ? RadarHud.lockedClosure
                     : (twsTrack == null ? 0.0 : twsTrack.closure);
+        } else if (twsTrack != null) {
+            sourceId = -(int) Math.abs((long) twsTrack.uuid.hashCode());
+            targetPos = twsTrack.predictedPosition(player.tickCount);
+            closure = twsTrack.closure;
         } else if (lockTarget != null && !lockTarget.isSelf(player)) {
             sourceId = -(int) Math.abs((long) lockTarget.uuid.hashCode());
             targetPos = lockTarget.livePosition();
@@ -477,9 +483,10 @@ public final class RadarHudClientTicker {
         RadarHud.seekerRing.update(ringX, ringY, 0.05);
 
         boolean aligned = RadarHud.seekerRing.aligned();
-        RadarTargetClass targetClass = entityTarget == null
-                ? (lockTarget == null ? null : lockTarget.targetClass)
-                : RadarCore.classify(entityTarget);
+        RadarTargetClass targetClass = entityTarget != null
+                ? RadarCore.classify(entityTarget)
+                : twsTrack != null ? RadarTargetClass.AIR
+                : (lockTarget == null ? null : lockTarget.targetClass);
         RadarMode trackMode = RadarHud.currentMode == RadarMode.STT
                 && RadarHud.preLockMode != null
                 ? RadarHud.preLockMode : RadarHud.currentMode;

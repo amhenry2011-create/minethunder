@@ -905,11 +905,6 @@ public final class RadarHudRenderer {
         String range = String.format("%.1f b", track.range);
         g.drawString(mc.font, range, tx - mc.font.width(range) / 2,
                 ty + half + 6, GREEN, false);
-        if (RadarHud.seekerEnabled
-                && RadarHud.selectedMissile == MissileSpec.Guidance.ARH) {
-            int width = Math.max(2, Math.round(SEEKER_RING_WIDTH * ui));
-            drawRing(g, tx, ty, half + 2, width, WHITE);
-        }
     }
 
     private static String radarStatus() {

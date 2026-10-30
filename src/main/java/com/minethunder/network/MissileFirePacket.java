@@ -107,7 +107,8 @@ public record MissileFirePacket(int guidance, int targetId,
                 reject(player, "目标超出导弹射程");
                 return;
             }
-            if (mode.usesNotch() && targetClass == com.minethunder.radar.RadarTargetClass.AIR
+            if (spec.guidance == MissileSpec.Guidance.SARH
+                    && mode.usesNotch() && targetClass == com.minethunder.radar.RadarTargetClass.AIR
                     && RadarCore.isGroundClutterBackground(player.level(),
                     player.getEyePosition(), target.getBoundingBox().getCenter(), targetClass)
                     && !RadarCore.hasValidDoppler(player, target)) {
