@@ -21,6 +21,8 @@ public final class Network {
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
         registrar.playToServer(MissileFirePacket.TYPE, MissileFirePacket.STREAM_CODEC,
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
+        registrar.playToServer(PlaneControlPacket.TYPE, PlaneControlPacket.STREAM_CODEC,
+                (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
         registrar.playToClient(SensorDebugPacket.TYPE, SensorDebugPacket.STREAM_CODEC,
                 (packet, context) -> context.enqueueWork(() -> packet.handle(context)));
         registrar.playToClient(RwrSyncPacket.TYPE, RwrSyncPacket.STREAM_CODEC,

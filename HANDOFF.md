@@ -1,33 +1,20 @@
 # MineThunder 交接 / 下次继续
 
-日期：2026-10-30
-状态：0.1.6（真实导引头多普勒/Notch、箔条假目标、全弹种溅射、单人 BVR 测试、维度过滤、RWR 1000 b、Apache-2.0）。已构建。
+日期：2026-10-25
+状态：七轮（Simple Planes 6-DoF 飞机与冷舱航电整合 + 全量源码审核与修复：SARH BVR 制导修复 / 飞机空地动态分类 / 载机初速动态 NEZ 与多普勒修正 / 多乘员前后座权限分离 / Ctrl+Alt 防误触 / 弓箭路径对齐 / 服务端清理）。
 
-## 2026-10-30 0.1.6：真实 Notch、箔条、溅射与 BVR 测试（最新）
+## 2026-10-25 七轮：全量审核与修复（最新）
 
-### 用户决议
-- 不额外收紧 `canLaunchArh` 的导引头阶段；ARH 仍按雷达锁发射。
-- 50 b 外无多普勒：导引头进度停止并衰减，持续约 1.5 s 回 `SEARCHING`；50 b 内烧穿。
-- 箔条是雷达假目标且不受 Notch 隐藏；热焰弹只对 IR 可见。
-- 所有导弹直接命中 25，6 b 内最多 8 点溅射；测试弹仍无伤害。
-- BVR 测试默认以自己为目标；`strike` 为实弹。
-- 许可证改为 Apache-2.0。
-
-### 本轮改动
-1. `SeekerLockModel` 删除 `LOCKED_QUALITY_FLOOR`，加入 `hasValidDoppler`：50 b 内或 |closure|≥5 m/s 才推进；无多普勒时 `decayNotch`，1.5 s 后搜索；质量低会回退白弧/搜索。
-2. `RadarCore`：50 b/5 m/s 判定、`hasValidDoppler`；箔条分类 AIR 且 `notchSeverity=0`，热焰弹分类 null；`RadarMode` 原有 Notch 模式不变。
-3. `RadarHudClientTicker`/`TwsTrackManager`：TRK/TWS 持续 Notch 20 tick 后掉锁/移除航迹；箔条免疫；BVR 维度按实体实际等级过滤。
-4. `ServerRadarState.validateBvrTarget` 与 `MissileFirePacket` 加入 Notch 校验；ARH/SARH 无多普勒拒绝发射，箔条例外。
-5. `SarhMissileArrow`/`ArhMissileArrow` 导引头失去有效多普勒时丢目标/转 IOG 或重新搜索。
-6. `MissileArrow`：`testGuided` 上移基类；全弹种 25 直伤 + 6 b 内 8 点衰减溅射，排除直接目标/发射者/同队/遮挡；爆炸半径 6，测试弹无伤害。
-7. `SensorDebugCommand` 新增 `/minethunder test bvr incoming arh|sarh [目标]` 与 `strike [目标]`：约 800 b、地形上方 60~80 b、目标视线前方，生成前加载区块。
-8. `RwrManager.RANGE` 600→1000；`BvrTrackManager.filter` 不再跨维度发布航迹。
-9. 版本 0.1.6、Apache-2.0 `LICENSE`、README 更新；移除 `gradle.properties` 中失效的 macOS Java 路径。
-
-### 待实测
-- 200 b 外静止目标：导引头应停涨并约 1.5 s 回搜索；50 b 内静止仍可锁。
-- 箔条应吸雷达锁/ARH 末段，热焰弹只在 IR 视野出现；BVR 航迹不应跨维度。
-- `/minethunder test bvr incoming arh` 与 `strike` 在 800 b 的制导/命中；实弹溅射不伤发射者/同队。
+### 审核发现与确认修复项
+1. **SARH 对 BVR 远程目标失锁修复（P0）**：`MissileArrow.datalinkValid()` 与 `updateDatalinkTarget()` 此前将 BVR 分支（`state.targetId() < 0`）限制为仅 `ARH`，导致 `SarhMissileArrow` 在 BVR 锁定时无法更新 `measuredTargetPos` 与 `lastKnownTargetPos`。现已打通 `SARH` 与 `ARH` 共用的 BVR 数据链测量与目标更新。
+2. **`PlaneEntity` 空/地动态分类（P0）**：`RadarCore.classify()` 与 `BvrTrackManager.classify()` 改为按 `plane.isAirborneTarget()` 动态返回 `AIR`（`BvrKind.AI`）或 `GROUND`（`BvrKind.GROUND`），并在 `TargetRegistry`、`RadarHudClientTicker`、`RadarHudRenderer` 中映射 `BvrKind.GROUND -> RadarTargetClass.GROUND`，使停机/滑行飞机在 `GMI` 对地模式下可见，起飞后切入对空 PD/TWS/ACM。
+3. **载机速度计入动态 NEZ 与 BVR 多普勒衰减（P1）**：`RadarHudRenderer.drawLaunchAssessment()` 将 `mc.player.getRootVehicle()` 载机速度叠加至 `vBurn`，高速巡航发射显著延伸面板右侧动态不可逃逸区（NEZ）；`bvrEchoAlpha()` 改用 `getRootVehicle().getDeltaMovement()` 计算真实相对径向速度。
+4. **多座飞机（Large / Cargo Plane）前后座权限分离与防自锁（P1）**：`PlaneClientInput`、`KeyInputHandler.toggleRadar` 与 `PlaneHudRenderer` 仅对前座主驾（`plane.isPilot(mc.player)`）绑定飞行操纵、冷舱电瓶锁死与主屏平显；后座乘员（WSO/乘客）可独立开关雷达与导引头；`TrackedTarget.isOwnedBy()` 新增 `player.getRootVehicle().getUUID()` 排除。
+5. **`Ctrl + Alt` 防误触与旧弓箭路径对齐（P1）**：`KeyInputHandler` 新增 `hasOtherActionKeyDown()` 排除同时按下其他雷达/武器功能键时的误发射；`MissileEvents.onArrowLoose` 对齐 BVR 远程目标、最大离轴角、`isOccludedForTarget` 及取消原因提示；新增 `ServerStoppedEvent` 清理 `ServerRadarState.clearAll()` 与 `RwrPaintPacket` 负数 ID 校验。
+6. **玩家位于飞机上时飞机无法移动修复（P0）**：
+   - **骑乘死锁修复**：`PlaneEntity.getControllingPassenger()` 此前返回第一位乘员（`Player`），导致客户端 `Entity.isControlledByLocalInstance() == true`（`ClientPacketListener` 忽略服务端所有 `ClientboundMoveEntityPacket`/`ClientboundTeleportEntityPacket` 位移包），而 `PlaneEntity.tick()` 在客户端又不执行物理移动，且 `LocalPlayer` 每 tick 发送 `ServerboundMoveVehiclePacket` 将服务端飞机坐标强行拉回客户端原地。现将 `getControllingPassenger()` 改为返回 `null`（保持服务端权威运动同步），新增 `getPilot()` / `isPilot()` 专职前座主驾判定，并补齐 1.21.1 `lerpTargetX/Y/Z()` 与 `maxUpStep(0.6F)`。
+   - **站立碰撞阻挡修复**：重写 `PlaneEntity.canCollideWith(Entity)` 仅对其他 `PlaneEntity` 发生硬碰撞，杜绝玩家或生物站在机身/机翼上时被 `Entity.collide` 当作不可穿透刚体墙阻挡飞机移动。
+   - **起飞滑跑体验优化**：发动机运转时推油门（`[R]` ≥ 20%）自动解除驻车制动（`PARK BRK`）；磁电机 `[G]` 从 `OFF` 按一次即切至 `BOTH`。
 
 ## 2026-10-23 六轮：面板铺满、导引头环分段、导弹飞行与 BVR 修复
 

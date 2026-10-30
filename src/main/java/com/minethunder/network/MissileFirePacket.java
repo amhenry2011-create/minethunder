@@ -108,8 +108,10 @@ public record MissileFirePacket(int guidance, int targetId,
                 return;
             }
             if (mode.usesNotch() && targetClass == com.minethunder.radar.RadarTargetClass.AIR
+                    && RadarCore.isGroundClutterBackground(player.level(),
+                    player.getEyePosition(), target.getBoundingBox().getCenter(), targetClass)
                     && !RadarCore.hasValidDoppler(player, target)) {
-                reject(player, "目标处于多普勒盲区");
+                reject(player, "目标处于地面杂波盲区");
                 return;
             }
             if (RadarCore.isOccludedForTarget(player.level(), player.getEyePosition(),

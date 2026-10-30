@@ -98,7 +98,9 @@ public final class BvrTicketService {
     }
 
     private static boolean isTrackable(Entity entity) {
-        return entity instanceof MissileArrow || entity.getTags().contains(BVR_TAG);
+        return entity instanceof MissileArrow
+                || entity instanceof com.minethunder.plane.PlaneEntity
+                || entity.getTags().contains(BVR_TAG);
     }
 
     @SubscribeEvent

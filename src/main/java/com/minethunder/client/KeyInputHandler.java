@@ -119,6 +119,12 @@ public final class KeyInputHandler {
                 }
             }
             case GLFW.GLFW_KEY_I -> {
+                if (mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
+                        && plane.isPilot(mc.player)
+                        && !plane.isEngineRunning()) {
+                    // 飞机未启动时按住 I 为点火马达，不弹红外模式切换提示
+                    break;
+                }
                 RadarHud.selectedMissile = MissileSpec.Guidance.IR;
                 RadarHud.selectedSpec = MissileSpecs.IR;
                 notifyClient(mc, Component.literal("红外弹模式 / 红外导引头"));
@@ -206,6 +212,14 @@ public final class KeyInputHandler {
             notifyClient(mc, Component.literal("ACQ PD 尝试锁定中，雷达开关已冻结"));
             return;
         }
+        if (mc.player != null
+                && mc.player.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane
+                && plane.isPilot(mc.player)
+                && !plane.isMasterBatteryOn()) {
+            RadarHud.radarOn = false;
+            notifyClient(mc, Component.literal("请先按 B 开启飞机主电瓶才能给机载雷达供电"));
+            return;
+        }
         RadarHud.radarOn = !RadarHud.radarOn;
         notifyClient(mc, Component.literal(
                 RadarHud.radarOn ? "雷达开启" : "雷达关闭"));
@@ -278,9 +292,11 @@ public final class KeyInputHandler {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
 
+        long window = mc.getWindow().getWindow();
         boolean altDown = isAltDown();
         boolean ctrlCombo = altDown && isCtrlDown();
-        if (ctrlCombo && !ctrlComboWasDown && mc.screen == null) {
+        if (ctrlCombo && !ctrlComboWasDown && mc.screen == null
+                && !hasOtherActionKeyDown(window)) {
             fireMissile(mc);
         }
         ctrlComboWasDown = ctrlCombo;
@@ -292,8 +308,6 @@ public final class KeyInputHandler {
             }
             altWasDown = altDown;
         }
-
-        long window = mc.getWindow().getWindow();
         boolean xDown = com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, GLFW.GLFW_KEY_X);
         if (altDown && xDown && !altXWasDown) {
             RadarHudClientTicker.toggleSeeker();
@@ -485,5 +499,23 @@ public final class KeyInputHandler {
     private static MissileSpec.Guidance nextMissile(MissileSpec.Guidance guidance) {
         var all = MissileSpec.Guidance.values();
         return all[(guidance.ordinal() + 1) % all.length];
+    }
+
+    /** 排除同时按下其他雷达/武器功能键（Alt+B/R/Q/D/W/F/T/X/E 等）时的 Ctrl+Alt 误触。 */
+    private static boolean hasOtherActionKeyDown(long window) {
+        int[] actionKeys = {
+                GLFW.GLFW_KEY_B, GLFW.GLFW_KEY_R, GLFW.GLFW_KEY_Q,
+                GLFW.GLFW_KEY_D, GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_F,
+                GLFW.GLFW_KEY_T, GLFW.GLFW_KEY_X, GLFW.GLFW_KEY_E,
+                GLFW.GLFW_KEY_C, GLFW.GLFW_KEY_H, GLFW.GLFW_KEY_ENTER,
+                GLFW.GLFW_KEY_UP, GLFW.GLFW_KEY_DOWN,
+                GLFW.GLFW_KEY_LEFT, GLFW.GLFW_KEY_RIGHT
+        };
+        for (int key : actionKeys) {
+            if (com.mojang.blaze3d.platform.InputConstants.isKeyDown(window, key)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

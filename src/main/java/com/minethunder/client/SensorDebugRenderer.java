@@ -343,6 +343,7 @@ public final class SensorDebugRenderer {
         return switch (kind) {
             case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
             case SURFACE -> RadarTargetClass.SEA;
+            case GROUND -> RadarTargetClass.GROUND;
         };
     }
 
@@ -352,6 +353,7 @@ public final class SensorDebugRenderer {
             case AI -> "空中目标";
             case MISSILE -> "导弹";
             case SURFACE -> "海面目标";
+            case GROUND -> "地面目标";
         };
     }
 

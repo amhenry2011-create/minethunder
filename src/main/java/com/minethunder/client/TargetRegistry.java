@@ -47,7 +47,8 @@ public final class TargetRegistry {
         }
 
         for (BvrTrack track : BvrState.active()) {
-            if (player.getUUID().equals(track.uuid())) continue;
+            if (player.getUUID().equals(track.uuid())
+                    || player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             RadarTargetClass targetClass = classOf(track);
             if (!RadarHud.currentMode.accepts(targetClass)) continue;
             if (RadarHud.currentMode == com.minethunder.radar.RadarMode.TWS
@@ -226,10 +227,11 @@ public final class TargetRegistry {
         return mc.level == null ? null : mc.level.getEntity(entityId);
     }
 
-    private static RadarTargetClass classOf(BvrTrack track) {
+    public static RadarTargetClass classOf(BvrTrack track) {
         return switch (track.kind()) {
             case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
             case SURFACE -> RadarTargetClass.SEA;
+            case GROUND -> RadarTargetClass.GROUND;
         };
     }
 }

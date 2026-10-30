@@ -20,6 +20,9 @@ public final class ClientHudEvents {
     @SubscribeEvent
     public static void onAddGuiLayers(RegisterGuiLayersEvent event) {
         event.registerAboveAll(
+                ResourceLocation.fromNamespaceAndPath(MineThunder.MODID, "plane_hud"),
+                ClientHudEvents::renderPlaneHud);
+        event.registerAboveAll(
                 ResourceLocation.fromNamespaceAndPath(MineThunder.MODID, "radar_hud"),
                 ClientHudEvents::renderRadar);
         event.registerAboveAll(
@@ -28,6 +31,14 @@ public final class ClientHudEvents {
         event.registerAboveAll(
                 ResourceLocation.fromNamespaceAndPath(MineThunder.MODID, "sensor_debug"),
                 ClientHudEvents::renderSensorDebug);
+    }
+
+    private static void renderPlaneHud(GuiGraphics g, DeltaTracker delta) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        int w = mc.getWindow().getGuiScaledWidth();
+        int h = mc.getWindow().getGuiScaledHeight();
+        PlaneHudRenderer.render(g, w, h, delta.getGameTimeDeltaPartialTick(true));
     }
 
     private static void renderRadar(GuiGraphics g, DeltaTracker delta) {

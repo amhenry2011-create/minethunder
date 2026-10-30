@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "transportation",
+  "key": {
+    "C": { "item": "minecraft:chest" },
+    "I": { "item": "minecraft:iron_block" },
+    "L": { "item": "minethunder:large_plane" },
+    "E": { "item": "minethunder:jet_engine" }
+  },
+  "pattern": [
+    "CIC",
+    "ILI",
+    " E "
+  ],
+  "result": {
+    "id": "minethunder:cargo_plane",
+    "count": 1
+  }
+}

@@ -9,6 +9,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
@@ -20,6 +21,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -87,8 +89,15 @@ public final class RadarCore {
         List<RadarContact> contacts = new ArrayList<>();
         List<Entity> entities = level.getEntities(exclude, area, Entity::isAlive);
 
+        Entity excludeRoot = exclude == null ? null : exclude.getRootVehicle();
+
         for (Entity e : entities) {
+            if (excludeRoot != null && (e == excludeRoot || e.getRootVehicle() == excludeRoot)) continue;
             if (e instanceof MissileArrow arrow && arrow.getOwner() == exclude) continue;
+            // 乘坐在飞机内的生物由飞机实体本身作为统一雷达反射体，避免同一位置出现双重回波
+            if (e instanceof LivingEntity living && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity) {
+                continue;
+            }
             Vec3 pos = e.getBoundingBox().getCenter();
             Vec3 to = pos.subtract(origin);
             double dist = to.length();
@@ -158,6 +167,22 @@ public final class RadarCore {
         return Math.abs(relativeVelocity.dot(to.normalize())) >= DOPPLER_NOTCH_THRESHOLD;
     }
 
+    /**
+     * 目标是否处于地面/海面杂波背景。只有低空目标才受真实 Notch 脱锁影响；
+     * 高空天空背景目标雷达仍可看到，只是质量下降。
+     */
+    public static boolean isGroundClutterBackground(Level level, Vec3 observerEye,
+                                                     Vec3 targetPos,
+                                                     @Nullable RadarTargetClass targetClass) {
+        if (targetClass != RadarTargetClass.AIR) return false;
+        if (observerEye.y < targetPos.y - 5.0) return false;
+        int x = (int) Math.floor(targetPos.x);
+        int z = (int) Math.floor(targetPos.z);
+        int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+        double aboveGround = targetPos.y - surface;
+        return aboveGround <= 30.0;
+    }
+
     /** 计算 0..1 的 Notch 严重度；径向速度必须使用 m/s。 */
     public static double notchSeverity(double radialVelocityMps, double distance,
                                        RadarMode mode) {
@@ -187,8 +212,11 @@ public final class RadarCore {
         return false;
     }
 
-    /** 目标分类：船、地面活体、空中活体；其他实体不进入雷达目标列表。 */
+    /** 目标分类：固定翼飞机、船、地面活体、空中活体；其他实体不进入雷达目标列表。 */
     public static RadarTargetClass classify(Entity entity) {
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.isAirborneTarget() ? RadarTargetClass.AIR : RadarTargetClass.GROUND;
+        }
         if (entity instanceof Marker marker) {
             return RadarBlockTargets.targetClass(marker);
         }
@@ -208,6 +236,9 @@ public final class RadarCore {
         }
         if (!(entity instanceof LivingEntity living) || !living.isAlive()) return null;
         if (living.isPassenger() && living.getVehicle() instanceof Boat) return null;
+        if (living.isPassenger() && living.getVehicle() instanceof com.minethunder.plane.PlaneEntity) {
+            return null;
+        }
         // 水面/水下活体仍作为空中模式可见目标，避免落水后完全隐身。
         if (living.isInWater()) return RadarTargetClass.AIR;
 

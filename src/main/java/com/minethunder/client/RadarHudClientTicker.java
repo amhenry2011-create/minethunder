@@ -45,6 +45,7 @@ public final class RadarHudClientTicker {
     private static final int LOCK_HOLD_TICKS = 180;
     /** TRK PD 连续跟踪失效后的拖锁宽限（1 秒） */
     private static final int TRK_LOST_GRACE_TICKS = 20;
+    private static final int GROUND_CLUTTER_GRACE_TICKS = 40;
     /** 满弓所需 ticks */
     private static final int FULL_DRAW_TICKS = 20;
 
@@ -186,6 +187,7 @@ public final class RadarHudClientTicker {
         List<RadarContact> rawContacts;
         double contactOffsetAz;
         double contactOffsetEl;
+        Vec3 ownVelocity = player.getRootVehicle().getDeltaMovement();
         if (trackingView) {
             // TRK PD 只跟踪锁定目标（本地或 BVR），不再跑通用扇区扫描。
             rawContacts = List.of();
@@ -198,7 +200,7 @@ public final class RadarHudClientTicker {
                 rawContacts = RadarCore.scan(mc.level, origin, look, RadarHud.currentMode,
                         RadarHud.effectiveRange(), Math.toRadians(RadarHud.effectiveScanHalfDeg()),
                         Math.toRadians(RadarHud.effectiveScanElevationHalfDeg()),
-                        player.getDeltaMovement(), player);
+                        ownVelocity, player);
                 contactOffsetAz = RadarHud.scanAzimuthOffsetDeg;
                 contactOffsetEl = RadarHud.scanElevationOffsetDeg;
             } else {
@@ -208,7 +210,7 @@ public final class RadarHudClientTicker {
                         player.getYRot() + (float) window.azCenterDeg()).normalize();
                 rawContacts = RadarCore.scanBeam(mc.level, origin, beamDir, RadarHud.currentMode,
                         RadarHud.effectiveRange(), Math.toRadians(window.azHalfDeg()),
-                        Math.toRadians(window.elHalfDeg()), player.getDeltaMovement(), player);
+                        Math.toRadians(window.elHalfDeg()), ownVelocity, player);
                 contactOffsetAz = window.azCenterDeg();
                 contactOffsetEl = window.elCenterDeg();
             }
@@ -219,7 +221,7 @@ public final class RadarHudClientTicker {
                     player.getYRot() + (float) window.azCenterDeg()).normalize();
             rawContacts = RadarCore.scanBeam(mc.level, origin, beamDir, RadarHud.currentMode,
                     RadarHud.effectiveRange(), Math.toRadians(window.azHalfDeg()),
-                    Math.toRadians(window.elHalfDeg()), player.getDeltaMovement(), player);
+                    Math.toRadians(window.elHalfDeg()), ownVelocity, player);
             contactOffsetAz = window.azCenterDeg();
             contactOffsetEl = window.elCenterDeg();
         }
@@ -248,11 +250,13 @@ public final class RadarHudClientTicker {
             }
             RadarHud.contactPaintTicks.put(c.entity.getUUID(), nowTick);
             if (RadarHud.currentMode == RadarMode.SRC_PD
-                    && c.entity instanceof Player target && target != player) {
-                int last = paintSentTicks.getOrDefault(target.getId(), -100);
+                    && ((c.entity instanceof Player target && target != player)
+                    || (c.entity instanceof com.minethunder.plane.PlaneEntity
+                    && c.entity != player.getRootVehicle()))) {
+                int last = paintSentTicks.getOrDefault(c.entity.getId(), -100);
                 if (nowTick - last >= 10) {
-                    Network.sendToServer(new RwrPaintPacket(target.getId()));
-                    paintSentTicks.put(target.getId(), nowTick);
+                    Network.sendToServer(new RwrPaintPacket(c.entity.getId()));
+                    paintSentTicks.put(c.entity.getId(), nowTick);
                 }
             }
         }
@@ -479,9 +483,12 @@ public final class RadarHudClientTicker {
         RadarMode trackMode = RadarHud.currentMode == RadarMode.STT
                 && RadarHud.preLockMode != null
                 ? RadarHud.preLockMode : RadarHud.currentMode;
+        boolean groundClutter = targetClass == RadarTargetClass.AIR
+                && RadarCore.isGroundClutterBackground(player.level(), eye, targetPos, targetClass);
         boolean dopplerGated = (targetClass == null
                 || targetClass == RadarTargetClass.AIR)
-                && trackMode.usesNotch();
+                && trackMode.usesNotch()
+                && groundClutter;
         RadarHud.seekerModel.update(0.05, true, aligned, offBoresight, range,
                 closure, RadarHud.selectedSpec, dopplerGated);
         RadarHud.lockProgress = (float) RadarHud.seekerModel.progress();
@@ -853,13 +860,17 @@ public final class RadarHudClientTicker {
                 ? RadarHud.preLockMode : RadarHud.currentMode;
         boolean surfaceTarget = targetClass == RadarTargetClass.GROUND
                 || targetClass == RadarTargetClass.SEA;
+        boolean groundClutter = targetClass == RadarTargetClass.AIR
+                && RadarCore.isGroundClutterBackground(player.level(), eye, targetPos, targetClass);
         boolean occluded = target != null && targetClass != null
                 && RadarCore.isOccludedForTarget(player.level(), eye, targetPos, targetClass);
-        boolean notching;
+        boolean dopplerInvalid = false;
+        boolean notching = false;
         if (target != null) {
-            notching = targetClass == RadarTargetClass.AIR
+            dopplerInvalid = targetClass == RadarTargetClass.AIR
                     && trackMode.usesNotch()
                     && !RadarCore.hasValidDoppler(player, target);
+            notching = dopplerInvalid && groundClutter;
             if (trackMode == RadarMode.GMI && surfaceTarget) {
                 notching = target.getDeltaMovement().horizontalDistance() * 20.0
                         < RadarCore.GMI_MIN_HORIZONTAL_SPEED;
@@ -869,15 +880,17 @@ public final class RadarHudClientTicker {
                     .subtract(player.getDeltaMovement().scale(20.0));
             double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                     : relativeVelocity.dot(to.normalize());
-            notching = targetClass == RadarTargetClass.AIR
+            dopplerInvalid = targetClass == RadarTargetClass.AIR
                     && trackMode.usesNotch()
                     && range > RadarCore.NOTCH_BURN_THROUGH_RANGE
                     && Math.abs(radialVelocity) < RadarCore.DOPPLER_NOTCH_THRESHOLD;
+            notching = dopplerInvalid && groundClutter;
             if (trackMode == RadarMode.GMI && surfaceTarget) {
                 notching = tracked.velocity().horizontalDistance() * 20.0
                         < RadarCore.GMI_MIN_HORIZONTAL_SPEED;
             }
         }
+        boolean skyNotch = dopplerInvalid && !groundClutter;
         boolean valid = range > 0.1
                 && range <= RadarHud.effectiveRange()
                 && !occluded
@@ -889,7 +902,7 @@ public final class RadarHudClientTicker {
             lockTicks = LOCK_HOLD_TICKS;
             inertialTicks = 0;
             RadarHud.lockLostTicks = 0;
-            RadarHud.lockAlpha = 1f;
+            RadarHud.lockAlpha = skyNotch ? 0.55f : 1f;
             RadarHud.seekerInertial = false;
             suppressLockInertial = false;
             refreshBvrPaint(player, tracked, tick);
@@ -897,7 +910,7 @@ public final class RadarHudClientTicker {
 
             if (target != null && targetClass != null) {
                 Vec3 relativeVelocity = target.getDeltaMovement()
-                        .subtract(player.getDeltaMovement()).scale(20.0);
+                        .subtract(player.getRootVehicle().getDeltaMovement()).scale(20.0);
                 double radialVelocity = to.lengthSqr() < 1.0E-6 ? 0.0
                         : relativeVelocity.dot(to.normalize());
                 double notchSeverity = RadarCore.isChaff(target) ? 0.0
@@ -920,10 +933,11 @@ public final class RadarHudClientTicker {
         lockTicks--;
         inertialTicks++;
         RadarHud.lockLostTicks++;
+        int graceTicks = groundClutter ? GROUND_CLUTTER_GRACE_TICKS : TRK_LOST_GRACE_TICKS;
         RadarHud.lockAlpha = Math.min(RadarHud.lockAlpha,
-                Math.max(0f, 1f - RadarHud.lockLostTicks / (float) TRK_LOST_GRACE_TICKS));
+                Math.max(0f, 1f - RadarHud.lockLostTicks / (float) graceTicks));
         RadarHud.seekerInertial = false;
-        if (RadarHud.lockLostTicks >= TRK_LOST_GRACE_TICKS) {
+        if (RadarHud.lockLostTicks >= graceTicks) {
             dropLock(RadarHud.isBvrLock() ? "BVR 远程失锁" : "目标拖锁");
         }
     }
@@ -956,7 +970,7 @@ public final class RadarHudClientTicker {
         Vec3 eye = player.getEyePosition();
         RadarHud.lockedName = target.displayName();
         RadarHud.lockedDistance = eye.distanceTo(targetPos);
-        Vec3 rel = target.velocity().subtract(player.getDeltaMovement()).scale(20.0);
+        Vec3 rel = target.velocity().subtract(player.getRootVehicle().getDeltaMovement()).scale(20.0);
         Vec3 dir = targetPos.subtract(eye);
         if (dir.lengthSqr() > 1.0E-6) {
             RadarHud.lockedClosure = -rel.dot(dir.normalize()); // 正 = 接近
@@ -1426,10 +1440,12 @@ public final class RadarHudClientTicker {
         double elHalf = Math.toRadians(window.elHalfDeg());
         double range = RadarHud.effectiveRange();
         for (BvrTrack track : BvrState.active()) {
-            if (player.getUUID().equals(track.uuid())) continue;
+            if (player.getUUID().equals(track.uuid())
+                    || player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             RadarTargetClass cls = switch (track.kind()) {
                 case PLAYER, AI, MISSILE -> RadarTargetClass.AIR;
                 case SURFACE -> RadarTargetClass.SEA;
+                case GROUND -> RadarTargetClass.GROUND;
             };
             if (!RadarHud.currentMode.accepts(cls)) continue;
             Vec3 pos = BvrState.lagCompensatedPosition(track);

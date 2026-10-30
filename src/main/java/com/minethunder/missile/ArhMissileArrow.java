@@ -96,11 +96,14 @@ public class ArhMissileArrow extends MissileArrow {
         double range = effectiveSeekerRange();
         AABB area = getBoundingBox().inflate(range);
         Entity owner = getOwner();
+        Entity ownerRoot = owner == null ? null : owner.getRootVehicle();
         Entity best = null;
         double bestDistance = Double.MAX_VALUE;
 
         for (Entity candidate : level().getEntities(this, area,
-                e -> e.isAlive() && e != owner && RadarCore.classify(e) != null
+                e -> e.isAlive() && e != owner
+                        && (ownerRoot == null || (e != ownerRoot && e.getRootVehicle() != ownerRoot))
+                        && RadarCore.classify(e) != null
                         && !isSameOwner(e, owner))) {
             Vec3 to = candidate.getBoundingBox().getCenter().subtract(pos);
             double distance = to.length();

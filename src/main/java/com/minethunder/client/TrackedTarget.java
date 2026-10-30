@@ -89,7 +89,8 @@ public final class TrackedTarget {
     }
 
     public boolean isSelf(Player player) {
-        return player.getUUID().equals(uuid);
+        return player.getUUID().equals(uuid)
+                || player.getRootVehicle().getUUID().equals(uuid);
     }
 
     public boolean isOwnedBy(Player player) {

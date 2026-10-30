@@ -33,6 +33,9 @@ public final class IrHeat {
     }
 
     public static double heat(Entity entity) {
+        if (entity instanceof com.minethunder.plane.PlaneEntity plane) {
+            return plane.getIrSignatureHeat();
+        }
         if (entity instanceof SunHeatMarker marker
                 && marker.getCustomName() != null
                 && marker.getCustomName().getString().startsWith("mt_heat_sun_")) {
@@ -67,6 +70,9 @@ public final class IrHeat {
                         BOOST_START.remove(player.getUUID());
                     }
                 }
+            }
+            if (living.getVehicle() instanceof com.minethunder.plane.PlaneEntity plane) {
+                heat = Math.max(heat, plane.getIrSignatureHeat());
             }
             if (living.isOnFire()) heat += 80.0;
             return heat;
