@@ -19,6 +19,8 @@ public final class TwsTrack {
     public int hits;
     public int notchTicks;
     public boolean confirmed;
+    public boolean bvr;
+    public String displayName;
 
     public TwsTrack(UUID uuid, int entityId, Vec3 position, Vec3 velocity,
                     double range, double azimuthDeg, double elevationDeg, double closure, int tick) {

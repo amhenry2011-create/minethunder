@@ -369,6 +369,7 @@ public final class RadarHudRenderer {
             if (mc.player.getUUID().equals(track.uuid())
                     || mc.player.getRootVehicle().getUUID().equals(track.uuid())) continue;
             if (track.kind() != BvrKind.PLAYER && track.kind() != BvrKind.AI) continue;
+            if (TwsTrackManager.find(track.uuid()) != null) continue;
             RadarEcho bvrShadow = RadarHud.echoes.get(track.uuid());
             if (localEchoVisible(mc, bvrShadow, nowTick, true)) continue;
             // 波束涂抹记忆：只显示被扫描波束扫过的航迹；锁定目标保持实时位置。
@@ -881,8 +882,16 @@ public final class RadarHudRenderer {
         if (mc.player == null) return;
         TwsTrack track = TwsTrackManager.selected();
         if (track == null || track.lastPaintTick < 0) return;
-
         int tick = mc.player.tickCount;
+        // 失去扫描更新后只保留惯性航迹，不再显示四角框或 INER。
+        if (track.coasting(tick)) return;
+        String name = track.displayName;
+        if (name == null || name.isEmpty()) {
+            Entity entity = TwsTrackManager.entity(track.entityId);
+            if (entity == null) return;
+            name = entity.getName().getString();
+        }
+
         Vec3 pos = track.predictedPosition(tick);
         float[] p = worldToScreen(pos, mc.player, screenW, screenH);
         if (p == null) return;
@@ -894,17 +903,10 @@ public final class RadarHudRenderer {
         int ty = (int) p[1];
         drawCornerBox(g, tx, ty, half, len, GREEN, 1f);
 
-        String name = "TWS";
-        Entity entity = TwsTrackManager.entity(track.entityId);
-        if (entity != null) name = entity.getName().getString();
         g.drawString(mc.font, name, tx - mc.font.width(name) / 2, ty - half - 18, GREEN, false);
         String range = String.format("%.1f b", track.range);
         g.drawString(mc.font, range, tx - mc.font.width(range) / 2,
                 ty + half + 6, GREEN, false);
-        if (track.coasting(tick)) {
-            g.drawString(mc.font, "INER", tx - mc.font.width("INER") / 2,
-                    ty - half - 30, AMBER, false);
-        }
         if (RadarHud.seekerEnabled
                 && RadarHud.selectedMissile == MissileSpec.Guidance.ARH) {
             int width = Math.max(2, Math.round(SEEKER_RING_WIDTH * ui));
